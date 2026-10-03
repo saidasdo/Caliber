@@ -1,5 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useCurrentPlantCode } from "../../lib/useCurrentPlantCode";
+import { useAppState } from "../../state/AppStateContext";
 
 // SPEC section 7: "page tabs (Overview, Diagnosis, Actions, Backtest, Data)". Diagnosis,
 // Actions and Backtest stay global, all-plant pages (the SPEC reason for Diagnosis is
@@ -18,42 +19,80 @@ const TABS = [
 
 // Which tabs make sense depends on how deep you are: the "All plants" dashboard only needs
 // awareness (what's happening, what needs a look); a plant gets the full working set; a
-// single machine already shows its own diagnosis/actions/history inline on one page, so a
-// separate tab strip there would just be a second way to the same content.
-const VISIBLE_KEYS: Record<"global" | "plant" | "machine", readonly string[]> = {
+// single machine is split into its own Overview and Action tabs (see machineEntries below).
+const VISIBLE_KEYS: Record<"global" | "plant", readonly string[]> = {
   global: ["overview", "diagnosis"],
   plant: ["overview", "diagnosis", "actions", "backtest", "data"],
-  machine: ["overview"],
 };
 
 export function PageTabs() {
   const plantCode = useCurrentPlantCode();
   const location = useLocation();
-  const scope = location.pathname.startsWith("/equipment/") ? "machine" : plantCode ? "plant" : "global";
-  const visibleTabs = TABS.filter((tab) => VISIBLE_KEYS[scope].includes(tab.key));
+  const { actionDue } = useAppState();
+  const onMachine = location.pathname.startsWith("/equipment/");
+  const scope = plantCode ? "plant" : "global";
+  const entries = onMachine
+    ? machineEntries(location.pathname, location.search, actionDue)
+    : TABS.filter((tab) => VISIBLE_KEYS[scope].includes(tab.key)).map((tab) => ({
+        key: tab.key,
+        label: tab.label,
+        icon: tab.icon,
+        to: hrefFor(tab, plantCode),
+        active: isActive(tab, location.pathname),
+        alert: false,
+      }));
 
   return (
     <nav className="flex gap-1 border-b border-line bg-paper px-2 py-1">
       <div className="flex overflow-hidden rounded border border-line">
-        {visibleTabs.map((tab, i) => {
-          const href = hrefFor(tab, plantCode);
-          const active = isActive(tab, location.pathname);
+        {entries.map((entry, i) => {
+          const active = entry.active;
+          const surface = active ? "bg-ink text-white" : "bg-paper text-mute hover:text-ink";
           return (
             <NavLink
-              key={tab.key}
-              to={href}
-              className={`flex items-center gap-1 px-1.5 py-1 text-12 font-medium ${
+              key={entry.key}
+              to={entry.to}
+              className={`relative flex items-center gap-1 px-1.5 py-1 text-12 font-medium ${
                 i > 0 ? "border-l border-line" : ""
-              } ${active ? "bg-ink text-white" : "bg-paper text-mute hover:text-ink"}`}
+              } ${entry.alert && !active ? "text-ink" : surface}`}
             >
-              <tab.icon />
-              {tab.label}
+              {entry.alert && !active && <span aria-hidden="true" className="tab-alarm-layer" />}
+              <span className={`relative flex items-center gap-1 ${entry.alert && !active ? "tab-alarm-text" : ""}`}>
+                <entry.icon />
+                {entry.label}
+              </span>
             </NavLink>
           );
         })}
       </div>
     </nav>
   );
+}
+
+// A machine page has its own two tabs (Overview and Action) instead of the plant tab set.
+// Action beeps while actionDue is true (see EquipmentPage), and is not beeping while it is
+// the tab you are already on.
+function machineEntries(pathname: string, search: string, actionDue: boolean) {
+  const tag = decodeURIComponent(pathname.slice("/equipment/".length));
+  const onAction = new URLSearchParams(search).get("view") === "action";
+  return [
+    {
+      key: "overview",
+      label: "Overview",
+      icon: GridIcon,
+      to: `/equipment/${encodeURIComponent(tag)}`,
+      active: !onAction,
+      alert: false,
+    },
+    {
+      key: "action",
+      label: "Action",
+      icon: ChecklistIcon,
+      to: `/equipment/${encodeURIComponent(tag)}?view=action`,
+      active: onAction,
+      alert: actionDue,
+    },
+  ];
 }
 
 function hrefFor(tab: (typeof TABS)[number], plantCode: string | null): string {

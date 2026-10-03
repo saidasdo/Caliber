@@ -28,6 +28,10 @@ interface AppState {
   // 2). Derived here, not stored, so it's always consistent with the live priority queue;
   // scoped to selectedPlant when one is set (Engineer's optional plant filter).
   topAlertTag: string | null;
+  // Set by the machine page: true while the machine is in alarm or trip and a suggested action
+  // is still untracked, so the Action tab in the page tabs beeps until someone acts on it.
+  actionDue: boolean;
+  setActionDue: (due: boolean) => void;
 }
 
 const AppStateContext = createContext<AppState | null>(null);
@@ -39,6 +43,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<ReplayConfig | null>(null);
   const [overview, setOverview] = useState<FetchState<OverviewResponse>>({ status: "loading" });
   const previousRole = useRef<Role>("Engineer");
+  const [actionDue, setActionDue] = useState(false);
 
   useEffect(() => {
     getReplayConfig()
@@ -108,9 +113,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       canSeeMoney: (plantCode?: string | null) => canSeeMoney(role, selectedPlant, plantCode),
       overview,
       topAlertTag,
+      actionDue,
+      setActionDue,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [config, replayDate, role, selectedPlant, overview, topAlertTag],
+    [config, replayDate, role, selectedPlant, overview, topAlertTag, actionDue],
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

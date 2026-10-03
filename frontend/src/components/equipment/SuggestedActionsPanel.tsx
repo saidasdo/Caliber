@@ -15,7 +15,16 @@ import type { SuggestedAction, TrackedAction } from "../../lib/types";
 // proposes (no PIC/due date), and a plant manager approves the proposal elsewhere (assigning
 // PIC and due date) or rejects it. Declining a suggestion outright (never proposing it) still
 // goes straight to Rejected, same as before phase 10.
-export function SuggestedActionsPanel({ tag, replayDate }: { tag: string; replayDate: string }) {
+export function SuggestedActionsPanel({
+  tag,
+  replayDate,
+  onChange,
+}: {
+  tag: string;
+  replayDate: string;
+  // Told after a proposal or rejection, so the page can refresh anything that depends on it.
+  onChange?: () => void;
+}) {
   const [refreshKey, setRefreshKey] = useState(0);
   const suggested = useFetch(
     () => getEquipmentSuggestedActions(tag, replayDate),
@@ -26,7 +35,10 @@ export function SuggestedActionsPanel({ tag, replayDate }: { tag: string; replay
     [tag, replayDate, refreshKey],
   );
 
-  const refetch = () => setRefreshKey((k) => k + 1);
+  const refetch = () => {
+    setRefreshKey((k) => k + 1);
+    onChange?.();
+  };
 
   return (
     <div className="h-full border border-line bg-paper">

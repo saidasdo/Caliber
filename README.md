@@ -79,6 +79,29 @@ rule server-side (a disallowed request gets HTTP 403, not just a hidden button),
 money fields the role shouldn't see are stripped from the API response itself, not
 just hidden in the browser.
 
+The machine page layout is the same for all three roles. The only difference is the
+impact card (estimated loss in USD), which Executive and Plant manager see and
+Engineer does not.
+
+## Machine page
+
+An equipment page has two tabs:
+
+- **Overview**: the three main gauges (availability, health margin to trip, production
+  vs normal), the status timeline, a weekly trend and an hourly trend panel that cycle
+  through their charts every few seconds (arrows and dots switch them by hand), and the
+  energy proxy. Click any chart for the full detail in a pop-up.
+- **Action**: when the machine is in ALARM or TRIP, everything about the problem sits in
+  one red "A problem occurred" group: root cause hint (with confirm/reject for the
+  engineer), similar incidents, suggested actions (propose, approve, reject), and RCA
+  evidence. The group scrolls when the panels run longer than the window. When the
+  machine is healthy, the tab says there is nothing to act on.
+
+The Action tab beeps red while an alarm is waiting for someone to act: the machine is
+in ALARM or TRIP, and at least one suggested action has no tracked action yet. The beep
+goes away once the suggestion is proposed or rejected, and it is shown to the roles that
+can propose or approve actions (Engineer and Plant manager).
+
 ## A 3-minute demo script
 
 Story: on 8 Apr 2026, KO-3201 is the top priority alert. Its diagnosis points at
@@ -89,35 +112,33 @@ fix, a plant manager approves it, and the backtest shows the warning was availab
 
 1. **Start as Executive** (the default role switch to click first). You land on the
    Overview page: point out the priority queue on the right, KO-3201 is #1 and
-   pulsing red for Critical. Below, "Top alerts" has the same alert in business
-   language: "Cracked Gas Compressor KO-3201 at risk of trip. Possible impact: risk
-   of trip, about 1.58 M USD." Click into KO-3201: the whole page is one Impact
-   summary card plus a one-line diagnosis, everything else collapsed, because an
-   executive does not need the sensor detail.
+   pulsing red for Critical. "Top alerts" has the same alert in business language:
+   "Cracked Gas Compressor KO-3201 at risk of trip. Possible impact: risk of trip,
+   about 1.58 M USD." Click into KO-3201: the machine page shows the gauges, timeline,
+   trends and energy proxy, plus the impact card with the estimated loss. Point out
+   the Action tab: as an executive you can comment and escalate there, not propose.
 
-2. **Switch to Plant manager** (equipment stays open). The same page now shows the
-   full gauges, a diagnosis summary line, and the suggested actions list, with the
-   sensor charts collapsed behind "Show sensor detail" toggles. Follow the ZCU
-   breadcrumb to the plant page: point out the downtime-by-cause chart, the RCA
-   summaries, and that loss in USD is visible here because ZCU is this manager's own
-   plant (switch the asset tree to another plant to show the money disappears there
-   too).
+2. **Switch to Plant manager** (equipment stays open). The machine page looks the same,
+   and the Action tab beeps red because a suggested action is still waiting for an
+   engineer. Follow the ZCU breadcrumb to the plant page: point out the downtime-by-cause
+   chart, the RCA summaries, and the "Pending your approval" section. Loss in USD is
+   visible here because ZCU is this manager's own plant (switch the asset tree to
+   another plant to show the money disappears there too).
 
-3. **Switch to Engineer** (equipment stays open again). Now every sensor chart is
-   expanded, the Root cause hint panel shows all 4 of 4 conditions with their
-   value/limit/trend rows, and the alert queue strip at the top lists the other live
-   alerts to jump between. Click "Confirm diagnosis", then in Suggested actions
-   click "Propose" on "Repair leaking lube-oil cooler tube". No PIC or due date yet;
-   that is the plant manager's step.
+3. **Switch to Engineer** (equipment stays open again). The machine page is unchanged,
+   except the impact card is gone. Open the Action tab and point at the root cause hint:
+   4 of 4 conditions met, each with its value, limit and trend. Click "Confirm diagnosis",
+   then in Suggested actions click "Propose" on "Repair leaking lube-oil cooler tube".
+   No PIC or due date yet; that is the plant manager's step. The beep stops.
 
-4. **Back to Plant manager**, ZCU page: a "Pending your approval" banner now shows
+4. **Back to Plant manager**, ZCU page: the "Pending your approval" section now shows
    the proposed action. Click Approve, fill in a PIC and due date, confirm. Mention
    every step so far (confirm, propose, approve) is in the audit log with role,
    timestamp and note.
 
-5. **Engineer again**: open the action's detail drawer and move it to In progress,
-   then Done with a short note. **Plant manager**: the same action now has a Close
-   button; click it.
+5. **Engineer again**: open the action's detail drawer on the Actions page and move it
+   to In progress, then Done with a short note. **Plant manager**: the same action now
+   has a Close button; click it.
 
 6. **Open the Backtest page**. Find the KO-3201 row: "Warning was available 11 weeks
    before the trip (weekly ALARM to TRIP)." Point at its lane in the swimlane chart
@@ -126,8 +147,7 @@ fix, a plant manager approves it, and the backtest shows the warning was availab
 7. **Close as Executive**: back on Overview, the "Overdue escalations" list is where
    an executive would press Escalate on anything overdue and add a comment, the one
    write action this role has. Mention the Data page has the full source map, KPI
-   dictionary and all 12 data quality checks for anyone who wants to verify a
-   number.
+   dictionary and all 12 data quality checks for anyone who wants to verify a number.
 
 ## Project layout
 

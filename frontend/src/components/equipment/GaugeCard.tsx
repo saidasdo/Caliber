@@ -36,7 +36,7 @@ export function GaugeCard({ title, gauge, min, max, unit, colorStops, formatValu
           startAngle: 210,
           endAngle: -30,
           radius: "100%",
-          center: ["50%", "62%"],
+          center: ["50%", "50%"],
           progress: { show: false },
           pointer: {
             show: true,
@@ -61,7 +61,9 @@ export function GaugeCard({ title, gauge, min, max, unit, colorStops, formatValu
             fontSize: compact ? 20 : 22,
             fontWeight: 700,
             color: colors.ink,
-            offsetCenter: [0, "10%"],
+            // Sits under the dial's hub, below where the needle sweeps, so the number never
+            // touches the needle at any value.
+            offsetCenter: [0, "42%"],
           },
           data: [{ value: gauge.value }],
         },

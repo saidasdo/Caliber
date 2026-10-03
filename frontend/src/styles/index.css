@@ -71,3 +71,47 @@
     animation: none;
   }
 }
+
+/* Action tab on a machine page while an alarm is waiting for someone to act: a red layer
+   that fades 100 -> 0 -> 100 behind the label (like a real alarm lamp), with the label
+   switching white/ink in step so it stays readable at both ends of the cycle. */
+@keyframes tab-alarm-layer {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes tab-alarm-text {
+  0%,
+  100% {
+    color: #ffffff;
+  }
+  50% {
+    color: #0e1116;
+  }
+}
+
+.tab-alarm-layer {
+  position: absolute;
+  inset: 0;
+  background-color: #d7191c;
+  animation: tab-alarm-layer 1s ease-in-out infinite;
+}
+
+.tab-alarm-text {
+  animation: tab-alarm-text 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-alarm-layer {
+    animation: none;
+  }
+  .tab-alarm-text {
+    animation: none;
+    color: #ffffff;
+  }
+}

@@ -1,17 +1,21 @@
-import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useAppState } from "../state/AppStateContext";
-import { getEquipment, getEquipmentStatusTimeline, getEquipmentWeeklySeries } from "../lib/api";
+import {
+  getActions,
+  getEquipment,
+  getEquipmentStatusTimeline,
+  getEquipmentSuggestedActions,
+  getEquipmentWeeklySeries,
+} from "../lib/api";
 import { useFetch } from "../lib/useFetch";
 import { useLogViewMoney } from "../lib/useLogViewMoney";
 import { colors } from "../styles/tokens";
-import { ROLE_CONFIG, type EquipmentWidgetKey } from "../roles/roleConfig";
+import { ROLE_CONFIG, canUseAction, type EquipmentWidgetKey } from "../roles/roleConfig";
 import type { Signal } from "../lib/types";
 import { Modal } from "../components/ui/Modal";
-import { SummaryTile } from "../components/ui/SummaryTile";
 import { ChartTile } from "../components/ui/ChartTile";
 import { RotatingPanel, type RotatingSlide } from "../components/ui/RotatingPanel";
-import { BulletBar } from "../components/ui/BulletBar";
 import { IdentityStrip } from "../components/equipment/IdentityStrip";
 import { GaugeCard } from "../components/equipment/GaugeCard";
 import { MachineStatusTimeline } from "../components/equipment/MachineStatusTimeline";
@@ -58,18 +62,59 @@ const SIGNAL_LABEL: Record<Signal, string> = {
   plant_rate: "Plant rate",
 };
 
-// Layout (top to bottom): the three main gauges, status timeline, two rotating trend panels,
-// the problem group (only when the machine is actually in ALARM or TRIP), energy proxy. Each
-// chart shows inline; the number and detail behind it open in a pop-up on click.
+type ModalKey = "gauges" | "statusTimeline" | "trends" | "energyProxy";
+
+// Two tabs on one machine. Overview (the default) is the glance: gauges, status timeline,
+// the rotating trends and the energy proxy, sized to fill the window. Action (?view=action)
+// holds everything about the problem (root cause, similar incidents, suggested actions, RCA
+// evidence) inside one red "A problem occurred" group, and is the tab that beeps while an
+// alarm is waiting for someone to act. Detail behind any chart opens as a pop-up on click.
 export function EquipmentPage() {
   const { tag = "" } = useParams<{ tag: string }>();
-  const { replayDate, role, overview } = useAppState();
-  const [modal, setModal] = useState<EquipmentWidgetKey | "trends" | null>(null);
+  const [searchParams] = useSearchParams();
+  const view = searchParams.get("view") === "action" ? "action" : "overview";
+  const { replayDate, role, overview, setActionDue } = useAppState();
+  const [modal, setModal] = useState<ModalKey | null>(null);
+  // Bumped when a suggested action is proposed or rejected, so the beep and the list refresh.
+  const [actionsVersion, setActionsVersion] = useState(0);
+  const onActionsChanged = () => setActionsVersion((v) => v + 1);
 
   const equipment = useFetch(() => getEquipment(tag, replayDate), [tag, replayDate, role]);
   const timeline = useFetch(() => getEquipmentStatusTimeline(tag), [tag]);
   const weekly = useFetch(() => getEquipmentWeeklySeries(tag), [tag]);
+  const suggested = useFetch(
+    () => getEquipmentSuggestedActions(tag, replayDate),
+    [tag, replayDate, role, actionsVersion],
+  );
+  const tracked = useFetch(
+    () => getActions({ replayDate, equipmentTag: tag, source: "diagnosis_suggestion" }),
+    [tag, replayDate, role, actionsVersion],
+  );
   useLogViewMoney("equipment", equipment.status === "ready" ? equipment.data.plant_code : undefined);
+
+  const healthStatus = equipment.status === "ready" ? equipment.data.weekly_state?.health_status : null;
+  const isProblem = healthStatus === "ALARM" || healthStatus === "TRIP";
+  const canAct = canUseAction(role, "propose") || canUseAction(role, "approveProposal");
+  // "An action to do": a suggestion that no tracked action covers yet (same matching the
+  // suggestion rows use to show Proposed/Approved state).
+  const actionDue =
+    isProblem &&
+    canAct &&
+    suggested.status === "ready" &&
+    tracked.status === "ready" &&
+    suggested.data.suggestions.some(
+      (s) =>
+        !tracked.data.results.some(
+          (a) =>
+            a.action_text === s.action_text &&
+            (s.source_capa_action_id === null || a.capa_action_id === s.source_capa_action_id),
+        ),
+    );
+
+  useEffect(() => {
+    setActionDue(actionDue);
+    return () => setActionDue(false);
+  }, [actionDue, setActionDue]);
 
   if (equipment.status === "loading") {
     return <div className="p-3 text-13 text-mute">Loading equipment...</div>;
@@ -88,16 +133,6 @@ export function EquipmentPage() {
   const show = (key: EquipmentWidgetKey) => widgets[key] !== "hidden";
   const priorityRow =
     overview.status === "ready" ? overview.data.priority_queue.find((r) => r.equipment_tag === tag) : undefined;
-
-  const status = eq.weekly_state?.health_status;
-  const isProblem = status === "ALARM" || status === "TRIP";
-  const problemTiles = [
-    show("diagnosisFull") && "diagnosis",
-    show("similarIncidents") && "similar",
-    show("suggestedActions") && "suggested",
-    show("rcaEvidence") && "rca",
-  ].filter(Boolean) as string[];
-  const showProblemGroup = isProblem && problemTiles.length > 0;
 
   const alarmHours =
     timeline.status === "ready" ? timeline.data.distribution.find((d) => d.lane === "alarm")?.duration_hours : undefined;
@@ -130,131 +165,101 @@ export function EquipmentPage() {
         <IdentityStrip equipment={eq} />
       </div>
 
-      {(show("impactSummary") || show("diagnosisOneLiner")) && (
-        <div className="grid shrink-0 grid-cols-12 gap-1">
-          {show("impactSummary") && (
-            <div className={show("diagnosisOneLiner") ? "col-span-6" : "col-span-12"}>
-              <ImpactSummaryCard equipment={eq} priorityRow={priorityRow} />
-            </div>
-          )}
-          {show("diagnosisOneLiner") && (
-            <div className={show("impactSummary") ? "col-span-6" : "col-span-12"}>
-              <DiagnosisOneLiner diagnosis={eq.diagnosis} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Row 1: the main three, biggest on the page */}
-      {show("gauges") && (
-        <div className="grid min-h-0 flex-[3] grid-cols-3 gap-1">
-          {GAUGE_SPECS.map((g) => (
-            <ChartTile key={g.key} label={g.title} onClick={() => setModal("gauges")}>
-              <GaugeCard
-                title={g.title}
-                gauge={gauges[g.key]}
-                min={g.min}
-                max={g.max}
-                unit={g.unit}
-                colorStops={GAUGE_COLOR_STOPS[g.key]}
-                compact
-              />
-            </ChartTile>
-          ))}
-        </div>
-      )}
-
-      {/* Row 2: status timeline */}
-      {show("statusTimeline") && (
-        <div className="min-h-0 flex-[1.3]">
-          <ChartTile
-            label="Status timeline"
-            sublabel={alarmHours != null ? `${alarmHours.toFixed(0)}h in alarm` : undefined}
-            onClick={() => setModal("statusTimeline")}
-          >
-            <MachineStatusTimeline
-              segments={timeline.status === "ready" ? timeline.data.segments : []}
-              hasHourlyCoverage={eq.has_hourly_coverage}
-              compact
-            />
-          </ChartTile>
-        </div>
-      )}
-
-      {/* Row 3: rotating trends (each panel cycles its own charts; click for all of them) */}
-      {(show("weeklyCharts") || show("hourlyTrend")) && (
-        <div className="grid min-h-0 flex-[2.5] grid-cols-2 gap-1">
-          {show("weeklyCharts") && (
-            <RotatingPanel label="Weekly trend" slides={weeklySlides} onOpen={() => setModal("trends")} />
-          )}
-          {show("hourlyTrend") && (
-            <RotatingPanel label="Hourly trend" slides={hourlySlides} onOpen={() => setModal("trends")} />
-          )}
-        </div>
-      )}
-
-      {/* Row 4: the problem group, only while the machine is in alarm or trip */}
-      {showProblemGroup && (
-        <div className="flex min-h-[170px] flex-[2.6] flex-col overflow-hidden border border-red">
-          <div className="shrink-0 bg-red px-2 py-0.5 text-12 font-semibold uppercase tracking-wide text-white">
-            A problem occurred
-          </div>
-          <div className="grid min-h-0 flex-1 grid-cols-4 gap-1 overflow-hidden p-1">
-            {problemTiles.includes("diagnosis") && (
-              <ChartTile
-                label={`Root cause hint ${eq.diagnosis.rule_name ? `${eq.diagnosis.passes}/${eq.diagnosis.of}` : ""}`}
-                sublabel={eq.diagnosis.confidence ?? "no confident hint"}
-                onClick={() => setModal("diagnosisFull")}
-              >
-                <div className="flex h-full flex-col justify-center gap-1">
-                  {eq.diagnosis.conditions.slice(0, 2).map((c, i) => (
-                    <div key={i}>
-                      <div className="truncate text-12 text-mute">{c.parameter}</div>
-                      <BulletBar value={c.value} limit={c.limit} danger={c.pass} />
-                    </div>
-                  ))}
-                  {eq.diagnosis.conditions.length === 0 && (
-                    <span className="text-12 text-mute">No confident hint</span>
-                  )}
+      {view === "overview" && (
+        <>
+          {(show("impactSummary") || show("diagnosisOneLiner")) && (
+            <div className="grid shrink-0 grid-cols-12 gap-1">
+              {show("impactSummary") && (
+                <div className={show("diagnosisOneLiner") ? "col-span-6" : "col-span-12"}>
+                  <ImpactSummaryCard equipment={eq} priorityRow={priorityRow} />
                 </div>
+              )}
+              {show("diagnosisOneLiner") && (
+                <div className={show("impactSummary") ? "col-span-6" : "col-span-12"}>
+                  <DiagnosisOneLiner diagnosis={eq.diagnosis} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* The three main gauges, biggest on the page */}
+          {show("gauges") && (
+            <div className="grid min-h-0 flex-[3] grid-cols-3 gap-1">
+              {GAUGE_SPECS.map((g) => (
+                <ChartTile key={g.key} label={g.title} onClick={() => setModal("gauges")}>
+                  <GaugeCard
+                    title={g.title}
+                    gauge={gauges[g.key]}
+                    min={g.min}
+                    max={g.max}
+                    unit={g.unit}
+                    colorStops={GAUGE_COLOR_STOPS[g.key]}
+                    compact
+                  />
+                </ChartTile>
+              ))}
+            </div>
+          )}
+
+          {show("statusTimeline") && (
+            <div className="min-h-0 flex-[1.4]">
+              <ChartTile
+                label="Status timeline"
+                sublabel={alarmHours != null ? `${alarmHours.toFixed(0)}h in alarm` : undefined}
+                onClick={() => setModal("statusTimeline")}
+              >
+                <MachineStatusTimeline
+                  segments={timeline.status === "ready" ? timeline.data.segments : []}
+                  hasHourlyCoverage={eq.has_hourly_coverage}
+                  compact
+                />
               </ChartTile>
-            )}
-            {problemTiles.includes("similar") && (
-              <SummaryTile
-                label="Similar incidents"
-                value={eq.similar_incidents.length}
-                sublabel="top matches"
-                onClick={() => setModal("similarIncidents")}
-              />
-            )}
-            {problemTiles.includes("suggested") && (
-              <SummaryTile
-                label="Suggested actions"
-                value="View"
-                sublabel="from diagnosis"
-                onClick={() => setModal("suggestedActions")}
-              />
-            )}
-            {problemTiles.includes("rca") && (
-              <SummaryTile
-                label="RCA evidence"
-                value={eq.linked_rca ? "Available" : "None"}
-                sublabel="4P, 4M+1E, chronology"
-                onClick={() => setModal("rcaEvidence")}
-              />
-            )}
-          </div>
-        </div>
+            </div>
+          )}
+
+          {/* Each panel cycles its own charts; click for all of them */}
+          {(show("weeklyCharts") || show("hourlyTrend")) && (
+            <div className="grid min-h-0 flex-[3] grid-cols-2 gap-1">
+              {show("weeklyCharts") && (
+                <RotatingPanel label="Weekly trend" slides={weeklySlides} onOpen={() => setModal("trends")} />
+              )}
+              {show("hourlyTrend") && (
+                <RotatingPanel label="Hourly trend" slides={hourlySlides} onOpen={() => setModal("trends")} />
+              )}
+            </div>
+          )}
+
+          {show("energyProxy") && (
+            <div className="min-h-0 flex-[2]">
+              <ChartTile label="Energy proxy" sublabel="motor load index" onClick={() => setModal("energyProxy")}>
+                <EnergyProxyPanel tag={tag} compact />
+              </ChartTile>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Row 5: energy proxy */}
-      {show("energyProxy") && (
-        <div className="min-h-[90px] flex-[1.2] overflow-hidden">
-          <ChartTile label="Energy proxy" sublabel="motor load index" onClick={() => setModal("energyProxy")}>
-            <EnergyProxyPanel tag={tag} compact />
-          </ChartTile>
-        </div>
-      )}
+      {view === "action" &&
+        (isProblem ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-red">
+            <div className="shrink-0 bg-red px-2 py-0.5 text-12 font-semibold uppercase tracking-wide text-white">
+              A problem occurred
+            </div>
+            {/* Scrolls when the panels run longer than the window; each panel stays at full size */}
+            <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-2 content-start gap-1 overflow-y-auto p-1">
+              {show("diagnosisFull") && <DiagnosisPanel diagnosis={eq.diagnosis} tag={tag} replayDate={replayDate} />}
+              {show("similarIncidents") && <SimilarIncidentsPanel incidents={eq.similar_incidents} />}
+              {show("suggestedActions") && (
+                <SuggestedActionsPanel tag={tag} replayDate={replayDate} onChange={onActionsChanged} />
+              )}
+              {show("rcaEvidence") && <RcaEvidencePanel rca={eq.linked_rca} />}
+            </div>
+          </div>
+        ) : (
+          <div className="border border-line bg-paper px-2 py-3 text-13 text-mute">
+            No active problem on this machine. Nothing needs action right now.
+          </div>
+        ))}
 
       {modal === "gauges" && (
         <Modal title="Gauges" onClose={() => setModal(null)} wide>
@@ -297,26 +302,6 @@ export function EquipmentPage() {
             {weekly.status === "ready" && <WeeklySmallMultiples parameters={weeklyParams} replayDate={replayDate} />}
             <HourlyTrendChart tag={tag} replayDate={replayDate} hasHourlyCoverage={eq.has_hourly_coverage} />
           </div>
-        </Modal>
-      )}
-      {modal === "diagnosisFull" && (
-        <Modal title="Root cause hint" onClose={() => setModal(null)}>
-          <DiagnosisPanel diagnosis={eq.diagnosis} tag={tag} replayDate={replayDate} />
-        </Modal>
-      )}
-      {modal === "similarIncidents" && (
-        <Modal title="Similar incidents" onClose={() => setModal(null)}>
-          <SimilarIncidentsPanel incidents={eq.similar_incidents} />
-        </Modal>
-      )}
-      {modal === "suggestedActions" && (
-        <Modal title="Suggested actions" onClose={() => setModal(null)}>
-          <SuggestedActionsPanel tag={tag} replayDate={replayDate} />
-        </Modal>
-      )}
-      {modal === "rcaEvidence" && (
-        <Modal title="RCA evidence" onClose={() => setModal(null)} wide>
-          <RcaEvidencePanel rca={eq.linked_rca} />
         </Modal>
       )}
       {modal === "energyProxy" && (
