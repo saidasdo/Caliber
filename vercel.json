@@ -1,0 +1,15 @@
+{
+  "buildCommand": "npm install --prefix frontend && npm run build --prefix frontend",
+  "outputDirectory": "frontend/dist",
+  "installCommand": "echo no-op",
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "{backend/**,data/**,db/schema.sql}",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

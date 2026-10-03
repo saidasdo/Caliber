@@ -1,0 +1,10 @@
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+db/plantpulse.sqlite
+frontend/dist/
+.env
+
+.vercel

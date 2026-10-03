@@ -1,0 +1,73 @@
+/* Self-hosted fonts (SPEC section 1: "@fontsource so the app works offline"). */
+@import "@fontsource-variable/archivo/wdth.css";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans text-13;
+    margin: 0;
+  }
+
+  /* Display type: Archivo, width axis per SPEC 7 ("semi-expanded for numbers, semi-condensed
+     for dense labels"), weights 700-800. Applied via utility classes below, not globally. */
+  .font-display {
+    font-family: "Archivo Variable", sans-serif;
+    font-weight: 700;
+  }
+
+  /* Tables/tags: tabular figures everywhere numbers appear (SPEC 7). */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Was 125%; felt too wide on headings and big KPI numbers, so dropped to normal width.
+     Kept as a class (not deleted) since it's applied in ~10 places and still marks "this is
+     a display number/heading" even though it's no longer stretching anything. */
+  .stretch-semi-expanded {
+    font-stretch: 100%;
+  }
+  .stretch-semi-condensed {
+    font-stretch: 87.5%;
+  }
+}
+
+/* Critical-priority cards (Overview priority queue, Diagnosis tab): a solid red background
+   that beeps between two full-strength reds, reserved for the single worst alarm class so it
+   doesn't compete with itself. Never dips in opacity, by request, so it stays a solid card at
+   every point in the cycle. Respects reduced-motion since a flashing UI is a real
+   vestibular/seizure concern for some users; they still get the solid red, just static. */
+@keyframes priority-pulse {
+  0%,
+  100% {
+    background-color: #d7191c;
+    box-shadow: 0 0 0 0 rgba(215, 25, 28, 0.45);
+  }
+  50% {
+    background-color: #e01f26;
+    box-shadow: 0 0 0 5px rgba(215, 25, 28, 0);
+  }
+}
+
+.priority-critical-pulse {
+  background-color: #d7191c;
+  animation: priority-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .priority-critical-pulse {
+    animation: none;
+  }
+}

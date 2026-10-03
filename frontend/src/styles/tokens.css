@@ -1,0 +1,16 @@
+/* SPEC section 7 color tokens. Keep in sync with tailwind.config.js and src/styles/tokens.ts. */
+:root {
+  --ink: #0e1116;
+  --paper: #ffffff;
+  --canvas: #f1f2f4;
+  --line: #d3d6db;
+  --mute: #5f6670;
+
+  --blue: #0a5cd6;
+
+  --green: #1a7a30;
+  --amber: #f2b300;
+  --orange: #bb4f0c;
+  --red: #d7191c;
+  --black: #000000;
+}

@@ -1,0 +1,15 @@
+{
+  "name": "plantpulse",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PlantPulse: local prototype for CALIBER 2026, Case 2",
+  "scripts": {
+    "ingest": "node scripts/ingest.js",
+    "api": "node scripts/api.js",
+    "web": "npm run dev --prefix frontend",
+    "dev": "concurrently -k -n API,WEB -c blue,green \"npm:api\" \"npm:web\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}
