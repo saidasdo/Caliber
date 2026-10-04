@@ -116,9 +116,10 @@ export function getEquipmentSuggestedActions(
   );
 }
 
-export function getProblems(replayDate: string, sourceType?: string): Promise<ProblemsResponse> {
+export function getProblems(replayDate: string, sourceType?: string, plantCode?: string): Promise<ProblemsResponse> {
   const params = new URLSearchParams({ replay_date: replayDate });
   if (sourceType) params.set("source_type", sourceType);
+  if (plantCode) params.set("plant_code", plantCode);
   return getJson(`/api/problems?${params}`);
 }
 
@@ -199,6 +200,18 @@ export function commentOnAction(id: number, comment: string): Promise<ActionComm
 
 export function getActionComments(id: number): Promise<{ results: ActionComment[] }> {
   return getJson(`/api/actions/${id}/comments`);
+}
+
+export interface ActionHistoryEvent {
+  ts: string;
+  actor_role: string | null;
+  kind: "event" | "comment";
+  event: string;
+  detail: Record<string, unknown>;
+}
+
+export function getActionHistory(id: number): Promise<{ action_id: number; results: ActionHistoryEvent[] }> {
+  return getJson(`/api/actions/${id}/history`);
 }
 
 export function getDiagnosisReview(tag: string): Promise<DiagnosisReview | null> {

@@ -283,26 +283,39 @@ def test_escalate_requires_executive_and_an_overdue_action():
     assert any(c["comment"] == "please expedite" for c in comments)
 
 
-def test_comment_requires_executive_role():
+def test_comments_are_open_to_all_three_roles():
+    # Comments are a shared thread on an action: every role can add one (the engineer and plant manager
+    # use it while working an action; the executive's comment right is kept).
     proposed = client.post(
         "/api/actions/propose",
         json={"equipment_tag": "KO-3201", "action_text": _unique_text("Comment test")},
         headers={"X-Role": "Engineer"},
     ).json()
+    for role in ["Engineer", "Plant manager", "Executive"]:
+        ok = client.post(
+            f"/api/actions/{proposed['id']}/comment",
+            json={"comment": f"looks fine ({role})"},
+            headers={"X-Role": role},
+        )
+        assert ok.status_code == 200, role
 
-    forbidden = client.post(
-        f"/api/actions/{proposed['id']}/comment",
-        json={"comment": "looks fine"},
+
+def test_action_history_merges_audit_events_and_comments():
+    proposed = client.post(
+        "/api/actions/propose",
+        json={"equipment_tag": "KO-3201", "action_text": _unique_text("History test")},
         headers={"X-Role": "Engineer"},
-    )
-    assert forbidden.status_code == 403
-
-    ok = client.post(
-        f"/api/actions/{proposed['id']}/comment",
-        json={"comment": "looks fine"},
-        headers={"X-Role": "Executive"},
-    )
-    assert ok.status_code == 200
+    ).json()
+    client.post(f"/api/actions/{proposed['id']}/comment", json={"comment": "first"}, headers={"X-Role": "Engineer"})
+    client.patch(f"/api/actions/{proposed['id']}", json={"status": "In progress"}, headers={"X-Role": "Engineer"})
+    r = client.get(f"/api/actions/{proposed['id']}/history").json()
+    kinds = [e["kind"] for e in r["results"]]
+    events = [e["event"] for e in r["results"] if e["kind"] == "event"]
+    assert "propose_action" in events
+    assert "update_action_status" in events
+    assert "comment" in kinds
+    ts = [e["ts"] for e in r["results"]]
+    assert ts == sorted(ts)  # oldest first
 
 
 def test_legacy_approve_endpoint_still_works_without_any_role_header():

@@ -1,6 +1,7 @@
 """Actions: list, approve, reject, status update (SPEC section 5.7), plus the phase 10
 role-gated flow (propose, approve/reject proposal, close, escalate, comment)."""
 
+import json
 import sqlite3
 from datetime import date, datetime
 
@@ -395,7 +396,8 @@ def comment_on_action(
     conn: sqlite3.Connection = Depends(get_connection),
     scope: RoleScope = Depends(get_role_scope),
 ):
-    require_role(scope, "Executive")
+    # Anyone on the action can comment (the comment thread is shared by all three roles).
+    require_role(scope, "Executive", "Plant manager", "Engineer")
     if not body.comment.strip():
         raise HTTPException(status_code=422, detail="Comment cannot be blank")
     _get_action_or_404(conn, action_id)
@@ -410,6 +412,35 @@ def list_comments(action_id: int, conn: sqlite3.Connection = Depends(get_connect
         "SELECT * FROM action_comments WHERE action_id = ? ORDER BY ts", (action_id,)
     ).fetchall()
     return {"results": rows_to_dicts(rows)}
+
+
+@router.get("/actions/{action_id}/history")
+def action_history(action_id: int, conn: sqlite3.Connection = Depends(get_connection)):
+    """Everything that happened to one action, oldest first: its audit_log entries (proposal, approval,
+    status changes, escalation, closing) and its comments, merged by time."""
+    _get_action_or_404(conn, action_id)
+    events = [
+        {
+            "ts": ts,
+            "actor_role": actor_role,
+            "kind": "event",
+            "event": action_type,
+            "detail": json.loads(detail_json or "{}"),
+        }
+        for ts, actor_role, action_type, detail_json in conn.execute(
+            "SELECT ts, actor_role, action_type, detail_json FROM audit_log "
+            "WHERE json_extract(detail_json, '$.action_id') = ? ORDER BY ts, id",
+            (action_id,),
+        ).fetchall()
+    ]
+    events += [
+        {"ts": ts, "actor_role": actor_role, "kind": "comment", "event": "comment", "detail": {"comment": comment}}
+        for comment, actor_role, ts in conn.execute(
+            "SELECT comment, actor_role, ts FROM action_comments WHERE action_id = ?", (action_id,)
+        ).fetchall()
+    ]
+    events.sort(key=lambda e: e["ts"] or "")
+    return {"action_id": action_id, "results": events}
 
 
 def _get_action_or_404(conn: sqlite3.Connection, action_id: int):

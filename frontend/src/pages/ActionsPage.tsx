@@ -9,19 +9,26 @@ import { FilterRail } from "../components/actions/FilterRail";
 import { ActionsTable } from "../components/actions/ActionsTable";
 import { ActionDetailDrawer } from "../components/actions/ActionDetailDrawer";
 import { PlantFilterChip } from "../components/shell/PlantFilterChip";
+import { ApproveProposalDialog } from "../components/actions/ApproveProposalDialog";
 
 // SPEC section 7: "Actions: narrow 3-column filter and count rail plus 9-column dense table,
 // detail drawer on the right." SPEC 5.7: Problem Tank sits alongside action tracking.
 export function ActionsPage() {
-  const { replayDate } = useAppState();
+  const { replayDate, role } = useAppState();
   const [status, setStatus] = useState<ActionStatus | null>(null);
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [selected, setSelected] = useState<TrackedAction | null>(null);
+  // A Plant manager clicking a proposed action approves it in a pop-up (PIC and due date).
+  const [approving, setApproving] = useState<TrackedAction | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [searchParams] = useSearchParams();
   const plantFilter = searchParams.get("plant");
 
-  const problems = useFetch(() => getProblems(replayDate), [replayDate, refreshKey]);
+  // The Problem Tank follows the plant filter too, so a plant manager sees only their plant's problems.
+  const problems = useFetch(
+    () => getProblems(replayDate, undefined, plantFilter ?? undefined),
+    [replayDate, plantFilter, refreshKey],
+  );
   const actions = useFetch(
     () => getActions({ replayDate, status: status ?? undefined, plantCode: plantFilter ?? undefined }),
     [replayDate, status, plantFilter, refreshKey],
@@ -68,21 +75,37 @@ export function ActionsPage() {
         </div>
         <div className="col-span-9">
           {actions.status === "ready" ? (
-            <ActionsTable actions={rows} selectedId={selected?.id ?? null} onSelect={setSelected} />
+            <ActionsTable
+              actions={rows}
+              selectedId={selected?.id ?? null}
+              onSelect={(a) => {
+                if (role === "Plant manager" && a.status === "Proposed") setApproving(a);
+                else setSelected(a);
+              }}
+            />
           ) : (
             <div className="border border-line bg-paper p-3 text-13 text-mute">Loading actions...</div>
           )}
         </div>
       </div>
 
+      {approving && (
+        <ApproveProposalDialog
+          action={approving}
+          onClose={() => setApproving(null)}
+          onApproved={() => {
+            setApproving(null);
+            refetch();
+          }}
+        />
+      )}
+
       {selected && (
         <ActionDetailDrawer
-          action={selected}
+          // The latest copy of the action, so the drawer shows the new status after a change.
+          action={rows.find((r) => r.id === selected.id) ?? selected}
           onClose={() => setSelected(null)}
-          onChanged={() => {
-            refetch();
-            setSelected(null);
-          }}
+          onChanged={refetch}
         />
       )}
     </div>

@@ -39,6 +39,7 @@ def _alert_problems(conn: sqlite3.Connection, replay_date: str) -> list[dict]:
         alerts.append(
             {
                 "id": f"alert-{tag}",
+                "plant_code": row["plant_code"],
                 "source_type": "alert",
                 "source_ref": tag,
                 "title": row["reason"],  # already starts with the tag, e.g. "KO-3201: ALARM, ..."
@@ -54,18 +55,29 @@ def _alert_problems(conn: sqlite3.Connection, replay_date: str) -> list[dict]:
 def list_problems(
     replay_date: str = Query(DEFAULT_REPLAY_DATE),
     source_type: str | None = Query(None),
+    plant_code: str | None = Query(None, description="Only problems at this plant"),
     conn: sqlite3.Connection = Depends(get_connection),
 ):
     """SPEC 4: "Incidents and actions only count if dated on or before it [the replay date]."
     RCA-case problems get a live priority_label from the priority engine (section 5.4); their
     stored priority_label is always null since severity changes with the replay date.
     """
-    sql = "SELECT * FROM problems WHERE opened_date <= ?"
+    # Each problem's plant: an RCA case through its equipment, an incident through its incident row.
+    plant_expr = "COALESCE(e.plant_code, i.plant_code)"
+    join = (
+        "FROM problems p "
+        "LEFT JOIN equipment e ON p.source_type = 'rca' AND e.tag = p.source_ref "
+        "LEFT JOIN incidents i ON p.source_type = 'incident' AND CAST(i.serial_no AS TEXT) = p.source_ref"
+    )
+    sql = f"SELECT p.*, {plant_expr} AS plant_code {join} WHERE p.opened_date <= ?"
     params: list = [replay_date]
     if source_type:
-        sql += " AND source_type = ?"
+        sql += " AND p.source_type = ?"
         params.append(source_type)
-    sql += " ORDER BY opened_date DESC"
+    if plant_code:
+        sql += f" AND {plant_expr} = ?"
+        params.append(plant_code)
+    sql += " ORDER BY p.opened_date DESC"
     rows = rows_to_dicts(conn.execute(sql, params).fetchall())
 
     priority_by_tag = {p["equipment_tag"]: p["priority_label"] for p in compute_priority(conn, replay_date)}
@@ -74,13 +86,18 @@ def list_problems(
             row["priority_label"] = priority_by_tag.get(row["source_ref"])
 
     if source_type in (None, "alert"):
-        rows = _alert_problems(conn, replay_date) + rows
+        alerts = _alert_problems(conn, replay_date)
+        if plant_code:
+            alerts = [a for a in alerts if a.get("plant_code") == plant_code]
+        rows = alerts + rows
 
+    count_sql = f"SELECT p.source_type, COUNT(*) {join} WHERE p.opened_date <= ?"
+    count_params: list = [replay_date]
+    if plant_code:
+        count_sql += f" AND {plant_expr} = ?"
+        count_params.append(plant_code)
     counts_by_source: dict[str, int] = dict(
-        conn.execute(
-            "SELECT source_type, COUNT(*) FROM problems WHERE opened_date <= ? GROUP BY source_type",
-            (replay_date,),
-        ).fetchall()
+        conn.execute(count_sql + " GROUP BY p.source_type", count_params).fetchall()
     )
     alert_count = sum(1 for r in rows if r["source_type"] == "alert")
     if alert_count:

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   getActions,
   getEquipmentSuggestedActions,
@@ -8,7 +8,7 @@ import {
 import { useFetch } from "../../lib/useFetch";
 import { useAppState } from "../../state/AppStateContext";
 import { canUseAction } from "../../roles/roleConfig";
-import type { SuggestedAction, TrackedAction } from "../../lib/types";
+import type { SuggestedAction, SuggestedActionsResponse, TrackedAction } from "../../lib/types";
 
 // SPEC section 5.7: "Suggested actions from the diagnosis ... only become tracked actions
 // after an engineer clicks Approve." Phase 10 splits that single step: the engineer here
@@ -40,29 +40,37 @@ export function SuggestedActionsPanel({
     onChange?.();
   };
 
+  // While a proposal refreshes the lists, keep showing the last loaded ones. Replacing them with a
+  // "Loading..." line made the page shorter for a moment, and the scroll position jumped to the top.
+  const lastLoaded = useRef<{ s: SuggestedActionsResponse; e: TrackedAction[] } | null>(null);
+  if (suggested.status === "ready" && existing.status === "ready") {
+    lastLoaded.current = { s: suggested.data, e: existing.data.results };
+  }
+  const view = lastLoaded.current;
+
   return (
     <div className="h-full border border-line bg-paper">
       <div className="border-b border-line px-2 py-1.5 text-12 font-semibold uppercase tracking-wide text-mute">
         Suggested actions
       </div>
-      {suggested.status !== "ready" || existing.status !== "ready" ? (
+      {!view ? (
         <p className="px-2 py-2 text-13 text-mute">
           {suggested.status === "loading" ? "Loading..." : "Unavailable"}
         </p>
-      ) : suggested.data.suggestions.length === 0 ? (
+      ) : view.s.suggestions.length === 0 ? (
         <p className="px-2 py-2 text-13 text-mute">
-          {suggested.data.confidence
+          {view.s.confidence
             ? "No corrective CAPA or library action found for this rule."
             : "No confident diagnosis, nothing to suggest."}
         </p>
       ) : (
         <ul className="divide-y divide-line">
-          {suggested.data.suggestions.map((s, i) => (
+          {view.s.suggestions.map((s, i) => (
             <SuggestionRow
               key={i}
               tag={tag}
               suggestion={s}
-              existingAction={existing.data.results.find(
+              existingAction={view.e.find(
                 (a) =>
                   a.action_text === s.action_text &&
                   (s.source_capa_action_id === null || a.capa_action_id === s.source_capa_action_id),

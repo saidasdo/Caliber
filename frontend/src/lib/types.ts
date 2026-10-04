@@ -517,6 +517,7 @@ export interface Problem {
   opened_date: string | null;
   status: string;
   priority_label: string | null;
+  plant_code?: string | null;
 }
 
 export interface ProblemsResponse {

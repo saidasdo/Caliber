@@ -48,6 +48,7 @@ export function ProblemTankSummary({
           <li key={p.id} className="flex items-center justify-between gap-2 px-2 py-1 text-12">
             <span className="flex items-center gap-1 truncate text-ink">
               <span className={`h-1 w-1 shrink-0 rounded-full ${SOURCE_DOT[p.source_type]}`} />
+              {p.plant_code && <span className="tabular shrink-0 text-mute">{p.plant_code}</span>}
               <span className="truncate">{p.title}</span>
             </span>
             {p.priority_label && <span className="shrink-0 text-mute">{p.priority_label}</span>}

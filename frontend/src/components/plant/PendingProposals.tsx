@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { getActions, approveProposal, rejectProposal } from "../../lib/api";
+import { getActions, rejectProposal } from "../../lib/api";
 import { useFetch } from "../../lib/useFetch";
 import type { TrackedAction } from "../../lib/types";
+import { ApproveProposalDialog } from "../actions/ApproveProposalDialog";
 
-// Phase 10 action flow step 2: plant manager approves (assigns PIC + due date) or rejects
-// each action an engineer proposed for this plant's equipment.
+// Phase 10 action flow step 2: plant manager approves (assigns PIC + due date) or rejects each action
+// an engineer proposed for this plant's equipment. Approve opens a pop-up to enter PIC and due date.
 export function PendingProposals({ plantCode, replayDate }: { plantCode: string; replayDate: string }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const actions = useFetch(
@@ -32,29 +33,11 @@ export function PendingProposals({ plantCode, replayDate }: { plantCode: string;
 }
 
 function ProposalRow({ action, onDone }: { action: TrackedAction; onDone: () => void }) {
-  const [mode, setMode] = useState<"idle" | "approve" | "reject">("idle");
-  const [pic, setPic] = useState("");
-  const [dueDate, setDueDate] = useState("");
+  const [approveOpen, setApproveOpen] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  async function submitApprove() {
-    if (!pic.trim() || !dueDate) {
-      setError("PIC and due date are required");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await approveProposal(action.id, { pic, due_date: dueDate });
-      onDone();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function submitReject() {
     if (!reason.trim()) {
@@ -84,18 +67,18 @@ function ProposalRow({ action, onDone }: { action: TrackedAction; onDone: () => 
       </div>
       <p className="text-13 text-ink">{action.action_text}</p>
 
-      {mode === "idle" && (
+      {!rejecting && (
         <div className="mt-1 flex gap-1">
           <button
             type="button"
-            onClick={() => setMode("approve")}
+            onClick={() => setApproveOpen(true)}
             className="border border-green px-1.5 py-0.5 text-12 font-medium text-green"
           >
             Approve
           </button>
           <button
             type="button"
-            onClick={() => setMode("reject")}
+            onClick={() => setRejecting(true)}
             className="border border-line px-1.5 py-0.5 text-12 font-medium text-mute"
           >
             Reject
@@ -103,48 +86,7 @@ function ProposalRow({ action, onDone }: { action: TrackedAction; onDone: () => 
         </div>
       )}
 
-      {mode === "approve" && (
-        <div className="mt-1 flex flex-col gap-1 border border-line bg-canvas p-1.5">
-          <label className="text-12 text-mute">
-            PIC
-            <input
-              type="text"
-              value={pic}
-              onChange={(e) => setPic(e.target.value)}
-              className="mt-0.5 block w-full border border-line bg-paper px-1 py-0.5 text-13"
-            />
-          </label>
-          <label className="text-12 text-mute">
-            Due date
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              className="tabular mt-0.5 block w-full border border-line bg-paper px-1 py-0.5 text-13"
-            />
-          </label>
-          {error && <p className="text-12 text-red">{error}</p>}
-          <div className="flex gap-1">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={submitApprove}
-              className="bg-green px-1.5 py-0.5 text-12 font-medium text-white disabled:opacity-50"
-            >
-              Confirm approve
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("idle")}
-              className="border border-line px-1.5 py-0.5 text-12 text-mute"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {mode === "reject" && (
+      {rejecting && (
         <div className="mt-1 flex flex-col gap-1 border border-line bg-canvas p-1.5">
           <label className="text-12 text-mute">
             Reason
@@ -167,13 +109,24 @@ function ProposalRow({ action, onDone }: { action: TrackedAction; onDone: () => 
             </button>
             <button
               type="button"
-              onClick={() => setMode("idle")}
+              onClick={() => setRejecting(false)}
               className="border border-line px-1.5 py-0.5 text-12 text-mute"
             >
               Cancel
             </button>
           </div>
         </div>
+      )}
+
+      {approveOpen && (
+        <ApproveProposalDialog
+          action={action}
+          onClose={() => setApproveOpen(false)}
+          onApproved={() => {
+            setApproveOpen(false);
+            onDone();
+          }}
+        />
       )}
     </li>
   );
