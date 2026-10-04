@@ -6,14 +6,19 @@ import type { Role } from "./types";
 
 let currentRole: Role = "Executive";
 let currentPlant: string | null = null;
+let currentReplayDate: string | null = null;
 
-export function setRequestScope(role: Role, plant: string | null): void {
+export function setRequestScope(role: Role, plant: string | null, replayDate: string | null = null): void {
   currentRole = role;
   currentPlant = plant;
+  currentReplayDate = replayDate;
 }
 
+// X-Replay-Date tells the backend which day "today" is, so writes record the date they were
+// made on (actions.as_of_date) and reads can hide everything after it.
 export function getRequestHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "X-Role": currentRole };
   if (currentPlant) headers["X-Plant"] = currentPlant;
+  if (currentReplayDate) headers["X-Replay-Date"] = currentReplayDate;
   return headers;
 }

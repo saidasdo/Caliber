@@ -14,13 +14,18 @@ MIN_CONSECUTIVE_HOURS = 3
 ROLLING_WINDOW = 24
 
 
-def detect_anomalies(conn: sqlite3.Connection, tag: str, signal: str) -> list[dict]:
-    rows = conn.execute(
+def detect_anomalies(conn: sqlite3.Connection, tag: str, signal: str, replay_date: str | None = None) -> list[dict]:
+    """replay_date=None is the retrospective view (backtest, full history). Live views always pass
+    the replay date, so nothing after it can flag an anomaly (SPEC section 4)."""
+    sql = (
         "SELECT ts, value FROM sensor_hourly "
-        "WHERE equipment_tag = ? AND signal = ? AND run_status = 'ON' AND value IS NOT NULL "
-        "ORDER BY ts",
-        (tag, signal),
-    ).fetchall()
+        "WHERE equipment_tag = ? AND signal = ? AND run_status = 'ON' AND value IS NOT NULL"
+    )
+    params: list = [tag, signal]
+    if replay_date is not None:
+        sql += " AND ts <= ?"
+        params.append(replay_date + " 23:59:59")
+    rows = conn.execute(sql + " ORDER BY ts", params).fetchall()
     if len(rows) < ROLLING_WINDOW + MIN_CONSECUTIVE_HOURS:
         return []
 

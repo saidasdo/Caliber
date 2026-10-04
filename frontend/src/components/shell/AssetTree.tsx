@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAppState } from "../../state/AppStateContext";
 import type { HealthStatus } from "../../lib/types";
+import type { PriorityRow } from "../../lib/types";
 
 const STATUS_DOT: Record<NonNullable<HealthStatus>, string> = {
   TRIP: "bg-red",
@@ -70,9 +71,8 @@ export function AssetTree() {
     const rankA = eqA.length ? STATUS_RANK[worstStatus(eqA) ?? "NORMAL"] : -1;
     const rankB = eqB.length ? STATUS_RANK[worstStatus(eqB) ?? "NORMAL"] : -1;
     if (rankA !== rankB) return rankB - rankA;
-    const scoreA = eqA.reduce((m, r) => Math.max(m, r.priority_score), 0);
-    const scoreB = eqB.reduce((m, r) => Math.max(m, r.priority_score), 0);
-    return scoreB - scoreA;
+    const bestRank = (eq: PriorityRow[]) => eq.reduce((m, r) => Math.min(m, r.rank ?? 99), 99);
+    return bestRank(eqA) - bestRank(eqB);
   });
 
   function toggle(plantCode: string) {

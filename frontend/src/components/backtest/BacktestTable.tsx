@@ -17,8 +17,12 @@ export function BacktestTable({ rows }: { rows: BacktestRow[] }) {
             <th className="px-2 py-1 font-medium">First hourly anomaly</th>
             <th className="px-2 py-1 font-medium">First OFF hour</th>
             <th className="px-2 py-1 font-medium text-right">Lead (hours)</th>
-            <th className="px-2 py-1 font-medium text-right">Downtime</th>
-            <th className="px-2 py-1 font-medium text-right">Loss</th>
+            <th className="px-2 py-1 font-medium text-right" title="Actual outcome, after the trip">
+              Downtime (actual outcome)
+            </th>
+            <th className="px-2 py-1 font-medium text-right" title="Actual outcome, after the trip">
+              Loss (actual outcome)
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-line">

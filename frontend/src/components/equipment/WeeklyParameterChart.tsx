@@ -3,15 +3,16 @@ import * as echarts from "echarts";
 import type { WeeklySeriesParameter } from "../../lib/types";
 import { colors } from "../../styles/tokens";
 
-// SPEC section 5.3: "Weekly parameters: four small charts with alarm and trip lines, replay
-// date marker."
+// SPEC section 5.3: "Weekly parameters: four small charts with alarm and trip lines." Replay rule
+// (SPEC 4): the line ends at the replay week. The x-axis keeps the full record width (axisWeeks), and
+// the weeks after the replay date are an empty grey band.
 export function WeeklyParameterChart({
   series,
-  replayDate,
+  axisWeeks,
   compact,
 }: {
   series: WeeklySeriesParameter;
-  replayDate: string;
+  axisWeeks: number;
   // No border/header/axis labels, a shorter chart: the real trend line for a summary tile.
   compact?: boolean;
 }) {
@@ -21,12 +22,10 @@ export function WeeklyParameterChart({
     if (!ref.current) return;
     const chart = echarts.init(ref.current);
 
-    const weeks = series.points.map((p) => p.week_date);
-    const values = series.points.map((p) => p.value);
-    const replayIndex = weeks.reduce(
-      (best, d, i) => (d <= replayDate ? i : best),
-      -1,
-    );
+    const points = series.points;
+    const n = Math.max(axisWeeks, points.length);
+    const labels = Array.from({ length: n }, (_, i) => (points[i] ? points[i].week_date.slice(5, 10) : ""));
+    const values = Array.from({ length: n }, (_, i) => points[i]?.value ?? null);
 
     const markLines: Record<string, unknown>[] = [];
     if (series.alarm !== null) {
@@ -43,19 +42,35 @@ export function WeeklyParameterChart({
         label: { formatter: "trip", fontSize: 10, color: colors.red },
       });
     }
+    const futureArea =
+      points.length < n
+        ? [
+            [
+              {
+                xAxis: points.length - 0.5,
+                itemStyle: { color: colors.canvas },
+                label: { show: false },
+              },
+              { xAxis: n - 1 },
+            ],
+          ]
+        : [];
 
     chart.setOption({
-      grid: { left: 36, right: 12, top: 10, bottom: 18 },
+      grid: { left: 40, right: 34, top: 16, bottom: 14 },
       textStyle: { fontFamily: "IBM Plex Sans" },
       xAxis: {
         type: "category",
-        data: weeks,
+        data: labels,
         axisLabel: { show: false },
         axisLine: { lineStyle: { color: colors.line } },
         axisTick: { show: false },
       },
       yAxis: {
         type: "value",
+        show: true,
+        name: series.unit ?? "",
+        nameTextStyle: { fontSize: 10, color: colors.mute, align: "left" },
         axisLabel: { fontSize: 10, color: colors.mute },
         axisLine: { show: false },
         splitLine: { lineStyle: { color: colors.line, type: "dashed" } },
@@ -65,29 +80,19 @@ export function WeeklyParameterChart({
           type: "line",
           data: values,
           showSymbol: false,
+          connectNulls: false,
           lineStyle: { color: colors.blue, width: 1.5 },
-          markLine: {
-            symbol: "none",
-            data: [
-              ...markLines,
-              ...(replayIndex >= 0
-                ? [
-                    {
-                      xAxis: replayIndex,
-                      lineStyle: { color: colors.ink, width: 1 },
-                      label: { show: false },
-                    },
-                  ]
-                : []),
-            ],
-          },
+          markLine: { symbol: "none", data: markLines },
+          markArea: { silent: true, data: futureArea },
         },
       ],
       tooltip: {
         trigger: "axis",
         extraCssText: "box-shadow: 0 4px 16px rgba(14,17,22,0.16);",
-        formatter: (params: { name: string; value: number }[]) =>
-          `${params[0].name}<br/>${series.parameter}: ${params[0].value} ${series.unit ?? ""}`,
+        formatter: (params: { dataIndex: number; value: number }[]) => {
+          const p = points[params[0].dataIndex];
+          return `${p?.week_date ?? ""}<br/>${series.parameter}: ${params[0].value} ${series.unit ?? ""}`;
+        },
       },
     });
 
@@ -97,7 +102,7 @@ export function WeeklyParameterChart({
       window.removeEventListener("resize", onResize);
       chart.dispose();
     };
-  }, [series, replayDate]);
+  }, [series, axisWeeks]);
 
   if (compact) {
     return <div ref={ref} style={{ height: "100%", minHeight: 70 }} />;

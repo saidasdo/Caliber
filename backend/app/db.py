@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from collections.abc import Iterator
 
@@ -25,13 +26,24 @@ def rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+# The build is written beside the live database and swapped in only when complete (see
+# publish_built_db). Rebuilding the live file in place let a request made during a reset read a
+# half-built database, which is the intermittent reset-test failure this fixes.
+BUILD_PATH = DB_PATH.with_name(DB_PATH.stem + ".building.sqlite")
+
+
 def build_fresh_db() -> sqlite3.Connection:
-    if DB_PATH.exists():
-        DB_PATH.unlink()
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    if BUILD_PATH.exists():
+        BUILD_PATH.unlink()
+    BUILD_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(BUILD_PATH)
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     return conn
+
+
+def publish_built_db() -> None:
+    """Move the finished build over the live database in one step."""
+    os.replace(BUILD_PATH, DB_PATH)
 
 
 def insert_many(conn: sqlite3.Connection, table: str, rows: list[dict]) -> None:

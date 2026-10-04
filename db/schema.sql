@@ -196,7 +196,11 @@ CREATE TABLE actions (
     escalated         INTEGER NOT NULL DEFAULT 0,
     approved_at       TEXT,
     closed_at         TEXT,
-    created_at        TEXT
+    created_at        TEXT,
+    -- Replay rule: the date the action became known (the RCA failure date for a CAPA preload,
+    -- the replay date the user was on when they created it otherwise). Lists show an action
+    -- only when this is on or before the replay date. NULL only for rows made before this column.
+    as_of_date        TEXT
 );
 
 -- Phase 10: engineer's confirm/reject of the current rule-based diagnosis for an equipment,

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import type { HeatmapCell } from "../../lib/types";
@@ -18,7 +19,15 @@ function monthKey(monthYear: string): string {
 
 // SPEC section 5.1: "Heatmap: plant x month (incident count, toggle to loss), inspired by the
 // 'Workload' heatmap in reference 2." Charts are Apache ECharts per section 1.
-export function Heatmap({ cells }: { cells: HeatmapCell[] }) {
+export function Heatmap({
+  cells,
+  height = 260,
+  headerAction,
+}: {
+  cells: HeatmapCell[];
+  height?: number;
+  headerAction?: ReactNode;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [metric, setMetric] = useState<Metric>("incident_count");
   // The heatmap spans all 12 plants at once, so it cannot be scoped to one plant: only
@@ -122,8 +131,9 @@ export function Heatmap({ cells }: { cells: HeatmapCell[] }) {
             </button>
           )}
         </div>
+        {headerAction}
       </div>
-      <div ref={ref} style={{ height: 260 }} />
+      <div ref={ref} style={{ height }} />
     </div>
   );
 }

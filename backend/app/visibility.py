@@ -9,7 +9,11 @@ nested under. A similar_incidents row from a different plant than the equipment 
 to, for example, is judged on its own plant_code, not the equipment's.
 """
 
-MONEY_KEYS = {"loss_kusd", "total_loss_kusd", "estimated_loss_kusd", "pot_loss_kusd", "act_loss_kusd"}
+# estimated_impact is the replay-safe estimate dict (value_kusd inside it), redacted as a whole.
+MONEY_KEYS = {
+    "loss_kusd", "total_loss_kusd", "estimated_loss_kusd", "pot_loss_kusd", "act_loss_kusd",
+    "estimated_impact", "value_kusd",
+}
 
 
 def can_see_money(role: str, plant_scope: str | None, plant_code: str | None) -> bool:

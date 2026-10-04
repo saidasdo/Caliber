@@ -30,7 +30,7 @@ def conn():
 
 @pytest.mark.parametrize("tag", ALL_TAGS)
 def test_energy_proxy_always_carries_the_required_label(tag):
-    r = client.get(f"/api/equipment/{tag}/energy-proxy")
+    r = client.get(f"/api/equipment/{tag}/energy-proxy", params={"replay_date": "2099-12-31"})
     assert r.status_code == 200
     assert r.json()["label"] == "Proxy derived from motor current, not metered energy"
 
@@ -42,7 +42,7 @@ def test_energy_proxy_history_matches_hourly_window_days(conn, tag):
         "WHERE equipment_tag = ? AND signal = 'motor_current'",
         (tag,),
     ).fetchone()[0]
-    r = client.get(f"/api/equipment/{tag}/energy-proxy")
+    r = client.get(f"/api/equipment/{tag}/energy-proxy", params={"replay_date": "2099-12-31"})
     body = r.json()
     assert len(body["history"]) == expected_days
     assert len(body["moving_average"]) == expected_days
@@ -55,14 +55,14 @@ def test_energy_proxy_daily_sum_matches_raw_hourly_data(conn):
         "WHERE equipment_tag = ? AND signal = 'motor_current' GROUP BY day ORDER BY day LIMIT 1",
         (tag,),
     ).fetchone()
-    r = client.get(f"/api/equipment/{tag}/energy-proxy")
+    r = client.get(f"/api/equipment/{tag}/energy-proxy", params={"replay_date": "2099-12-31"})
     first_history_point = r.json()["history"][0]
     assert first_history_point["day"] == first_day_sum[0]
     assert abs(first_history_point["motor_load_index"] - first_day_sum[1]) < 0.01
 
 
 def test_energy_proxy_forecast_is_seven_days_starting_after_the_window():
-    r = client.get("/api/equipment/KO-3201/energy-proxy")
+    r = client.get("/api/equipment/KO-3201/energy-proxy", params={"replay_date": "2099-12-31"})
     body = r.json()
     last_history_day = body["history"][-1]["day"]
     forecast_days = [f["day"] for f in body["forecast"]]
@@ -72,7 +72,7 @@ def test_energy_proxy_forecast_is_seven_days_starting_after_the_window():
 
 
 def test_energy_proxy_forecast_equals_final_moving_average():
-    r = client.get("/api/equipment/KO-3201/energy-proxy")
+    r = client.get("/api/equipment/KO-3201/energy-proxy", params={"replay_date": "2099-12-31"})
     body = r.json()
     last_moving_average = body["moving_average"][-1]["value"]
     assert all(f["value"] == last_moving_average for f in body["forecast"])
@@ -121,7 +121,7 @@ def test_reset_demo_data_restores_pristine_action_count():
     # Other test modules in the full suite may have already mutated this shared DB (see
     # tests/test_actions_phase6.py), so compare against a captured baseline, not a literal
     # count, and only assert the known-pristine invariant (47 preloaded) after reset.
-    before_count = len(client.get("/api/actions").json()["results"])
+    before_count = len(client.get("/api/actions", params={"replay_date": "2099-12-31"}).json()["results"])
 
     client.post(
         "/api/actions/approve",
@@ -132,14 +132,14 @@ def test_reset_demo_data_restores_pristine_action_count():
             "due_date": "2026-05-01",
         },
     )
-    mutated_count = len(client.get("/api/actions").json()["results"])
+    mutated_count = len(client.get("/api/actions", params={"replay_date": "2099-12-31"}).json()["results"])
     assert mutated_count == before_count + 1
 
     r = client.post("/api/reset-demo-data")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
 
-    reset_count = len(client.get("/api/actions").json()["results"])
+    reset_count = len(client.get("/api/actions", params={"replay_date": "2099-12-31"}).json()["results"])
     assert reset_count == 47  # always true post-reset: exactly the preloaded CAPA actions
 
 

@@ -4,7 +4,7 @@ role-gated flow (propose, approve/reject proposal, close, escalate, comment)."""
 import sqlite3
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Header, APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.audit import write_audit_log as _write_audit_log
@@ -39,7 +39,9 @@ def list_actions(
 ):
     join = " JOIN equipment ON equipment.tag = actions.equipment_tag" if plant_code else ""
     sql = f"SELECT actions.* FROM actions{join} WHERE 1=1"
-    params: list = []
+    # Replay rule: only actions known on or before the replay date (legacy rows with no date stay).
+    sql += " AND (actions.as_of_date IS NULL OR actions.as_of_date <= ?)"
+    params: list = [replay_date]
     if plant_code:
         sql += " AND equipment.plant_code = ?"
         params.append(plant_code)
@@ -62,12 +64,19 @@ def list_actions(
             conn.execute(
                 "SELECT actions.status, COUNT(*) FROM actions "
                 "JOIN equipment ON equipment.tag = actions.equipment_tag "
-                "WHERE equipment.plant_code = ? GROUP BY actions.status",
-                (plant_code,),
+                "WHERE equipment.plant_code = ? AND (actions.as_of_date IS NULL OR actions.as_of_date <= ?) "
+                "GROUP BY actions.status",
+                (plant_code, replay_date),
             ).fetchall()
         )
     else:
-        counts = dict(conn.execute("SELECT status, COUNT(*) FROM actions GROUP BY status").fetchall())
+        counts = dict(
+            conn.execute(
+                "SELECT status, COUNT(*) FROM actions "
+                "WHERE as_of_date IS NULL OR as_of_date <= ? GROUP BY status",
+                (replay_date,),
+            ).fetchall()
+        )
     return {"results": rows, "counts_by_status": counts}
 
 
@@ -81,7 +90,7 @@ class ApproveRequest(BaseModel):
 
 
 @router.post("/actions/approve")
-def approve_suggested_action(body: ApproveRequest, conn: sqlite3.Connection = Depends(get_connection)):
+def approve_suggested_action(body: ApproveRequest, conn: sqlite3.Connection = Depends(get_connection), x_replay_date: str | None = Header(None)):
     """SPEC 5.7: a suggested action "only becomes a tracked action after an engineer clicks
     Approve (with PIC and due date)." Every approve is written to audit_log."""
     problem = conn.execute(
@@ -113,6 +122,8 @@ def approve_suggested_action(body: ApproveRequest, conn: sqlite3.Connection = De
     )
     conn.commit()
 
+    conn.execute("UPDATE actions SET as_of_date = ? WHERE id = ?", (x_replay_date, cur.lastrowid))
+    conn.commit()
     row = conn.execute("SELECT * FROM actions WHERE id = ?", (cur.lastrowid,)).fetchone()
     return dict(row)
 
@@ -126,7 +137,7 @@ class RejectRequest(BaseModel):
 
 
 @router.post("/actions/reject")
-def reject_suggested_action(body: RejectRequest, conn: sqlite3.Connection = Depends(get_connection)):
+def reject_suggested_action(body: RejectRequest, conn: sqlite3.Connection = Depends(get_connection), x_replay_date: str | None = Header(None)):
     """SPEC 5.7: "Reject needs a reason." Recorded as a Rejected action (so it stays visible
     and filterable in the dense table) rather than discarded, and logged to audit_log."""
     if not body.reason.strip():
@@ -159,6 +170,8 @@ def reject_suggested_action(body: RejectRequest, conn: sqlite3.Connection = Depe
     )
     conn.commit()
 
+    conn.execute("UPDATE actions SET as_of_date = ? WHERE id = ?", (x_replay_date, cur.lastrowid))
+    conn.commit()
     row = conn.execute("SELECT * FROM actions WHERE id = ?", (cur.lastrowid,)).fetchone()
     return dict(row)
 
@@ -226,6 +239,7 @@ def propose_action(
     body: ProposeRequest,
     conn: sqlite3.Connection = Depends(get_connection),
     scope: RoleScope = Depends(get_role_scope),
+    x_replay_date: str | None = Header(None),
 ):
     """Phase 10 action flow step 1b: engineer proposes an action from a suggestion (or a new
     one), with no PIC or due date yet; those are the plant manager's to assign on approval."""
@@ -255,6 +269,8 @@ def propose_action(
         {"action_id": cur.lastrowid, "equipment_tag": body.equipment_tag, "action_text": body.action_text},
         scope.role,
     )
+    conn.commit()
+    conn.execute("UPDATE actions SET as_of_date = ? WHERE id = ?", (x_replay_date, cur.lastrowid))
     conn.commit()
     return dict(conn.execute("SELECT * FROM actions WHERE id = ?", (cur.lastrowid,)).fetchone())
 

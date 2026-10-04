@@ -21,7 +21,7 @@ from app.config import (  # noqa: E402
     ROOT_DIR,
     SENSOR_PLANTS,
 )
-from app.db import build_fresh_db, insert_many  # noqa: E402
+from app.db import build_fresh_db, insert_many, publish_built_db  # noqa: E402
 from app.ingest import dq_checks  # noqa: E402
 from app.ingest.acceptance import print_report, run_acceptance_checks  # noqa: E402
 from app.ingest.readers.equipment_performance import read_equipment_performance_file  # noqa: E402
@@ -296,10 +296,85 @@ def ingest_dq_issues(conn, rca_extractions):
 
 
 def ingest_assumptions(conn):
+    from app import config
+
+    now = datetime.utcnow().isoformat()
     insert_many(
         conn,
         "assumptions",
         [
+            {
+                "area": "replay / estimated impact",
+                "assumption_text": "Estimated impact for a replay date is the median total loss of earlier incidents "
+                "for the same eq_type_family (fallback: same eq_class, then all), dated before the replay date. "
+                "It is never the equipment's own RCA loss.",
+                "rationale": "Replay rule: nothing shown for a replay date may use information dated after it. "
+                "The RCA loss includes failures after the replay date, so it is not used before the RCA is known.",
+                "created_at": now,
+            },
+            {
+                "area": "replay / similar incidents",
+                "assumption_text": "Similar incidents are scored from the diagnosis for the replay date (failure mode "
+                "mapped to eq_type_family, component_family, mechanism_norm; DIAGNOSIS_PROFILES), using only "
+                "incidents dated before the replay date. Discipline is not scored.",
+                "rationale": "The equipment's own later failure must never appear as its own similar case.",
+                "created_at": now,
+            },
+            {
+                "area": "replay / suggested actions",
+                "assumption_text": "CAPA actions are suggested only from an RCA whose equipment failure date is before "
+                "the replay date. Otherwise the generic action library (2 corrective, 2 preventive per rule) is used.",
+                "rationale": "Before the failure date the RCA's actions were not yet known. The library is written from "
+                "general maintenance practice, not copied from the RCA decks.",
+                "created_at": now,
+            },
+            {
+                "area": "replay / RCA evidence",
+                "assumption_text": "An RCA is shown only on or after its failure date (equipment.failure_date <= replay "
+                "date). Before that, the panel lists RCAs of similar past incidents dated before the replay date.",
+                "rationale": "Replay rule (see estimated impact above).",
+                "created_at": now,
+            },
+            {
+                "area": "gauges / health margin",
+                "assumption_text": "Health margin baseline = median of each parameter over the first 6 weeks of "
+                "condition_weekly for the equipment. Margin = (trip - value) / (trip - baseline) for higher-is-worse, "
+                "(value - trip) / (baseline - trip) for lower-is-worse. 100% = at baseline, 0% = at trip, negative = "
+                "beyond trip. Bands: red below 0, amber from 0 to the highest alarm margin across the monitored parameters, green above.",
+                "rationale": "The previous formula measured distance to trip relative to the trip limit, so a healthy "
+                "machine could show a low margin. The baseline is fixed per parameter, so it does not move with the "
+                "replay date.",
+                "created_at": now,
+            },
+            {
+                "area": "reliability / MTBF and MTTR",
+                "assumption_text": "Failures = TRIP episodes in health_weekly on or before the replay date (consecutive "
+                "TRIP weeks count as one). MTBF = observed hours (hourly record up to the replay date) / failures. "
+                "MTTR = OFF hours (run_status) up to the replay date / failures. No failure yet: 'No failure in period'.",
+                "rationale": "Computed only from data up to the replay date; performance_summary covers the whole "
+                "monitoring period and so includes later failures.",
+                "created_at": now,
+            },
+            {
+                "area": "emission estimate (motor-driven equipment)",
+                "assumption_text": "Per ON hour: kW = sqrt(3) x MOTOR_VOLTAGE_KV x motor current (A) x POWER_FACTOR; "
+                f"kWh per day = sum over ON hours; kg CO2e = kWh x GRID_EMISSION_FACTOR_KG_PER_KWH. Current factors: "
+                f"MOTOR_VOLTAGE_KV = {config.MOTOR_VOLTAGE_KV}, POWER_FACTOR = {config.POWER_FACTOR}, "
+                f"GRID_EMISSION_FACTOR_KG_PER_KWH = {config.GRID_EMISSION_FACTOR_KG_PER_KWH}. "
+                "THESE ARE PLACEHOLDERS: the team must replace them with official values (nameplate voltage, measured or "
+                "nameplate power factor, official grid emission factor) before any figure is used.",
+                "rationale": "No metered energy exists in the dataset. Heat exchangers (no motor drive) are excluded. "
+                "Labeled as an estimate from motor current, not metered energy.",
+                "created_at": now,
+            },
+            {
+                "area": "display unit / KO-3201 vibration",
+                "assumption_text": "The hourly chart and API response show KO-3201 vibration as 'µm (assumed, see DQ1)'. "
+                "Raw values are unchanged.",
+                "rationale": "DQ1: the PI Tag label says mm/s, but the values match the micron weekly data.",
+                "created_at": now,
+            },
+
             {
                 "area": "sensor_hourly / KO-3201 vibration",
                 "assumption_text": "KO3201_VIB is treated as micron, not mm/s as its PI Tag engunits label states.",
@@ -402,18 +477,19 @@ KPI_DICTIONARY = [
     },
     {
         "kpi_name": "MTBF",
-        "definition": "Mean time between failures over the monitoring period.",
-        "formula": "Period Hours / No. of Failures (period)",
-        "source": "Equipment Performance: Performance Summary",
-        "refresh_frequency": "Weekly",
+        "definition": "Mean time between failures, as of the replay date. Shown on the plant page equipment table. "
+        "'No failure in period' until the first failure.",
+        "formula": "Observed hours (hourly record up to replay date) / TRIP episodes up to replay date (health_weekly)",
+        "source": "Computed: health_weekly, sensor_hourly (run_status). Not performance_summary, which includes later failures.",
+        "refresh_frequency": "Live (per replay date)",
         "owner": "Reliability Engineer",
     },
     {
         "kpi_name": "MTTR",
-        "definition": "Mean time to repair for failures in the monitoring period.",
-        "formula": "Total Downtime Hours / No. of Failures (period)",
-        "source": "Equipment Performance: Performance Summary",
-        "refresh_frequency": "Weekly",
+        "definition": "Mean time to repair, as of the replay date: OFF hours per failure.",
+        "formula": "OFF hours (run_status) up to replay date / TRIP episodes up to replay date",
+        "source": "Computed: sensor_hourly (run_status), health_weekly. Not performance_summary.",
+        "refresh_frequency": "Live (per replay date)",
         "owner": "Reliability Engineer",
     },
     {
@@ -488,6 +564,32 @@ KPI_DICTIONARY = [
         "refresh_frequency": "Daily",
         "owner": "Energy/Reliability Engineer",
     },
+    {
+        "kpi_name": "Health margin to trip",
+        "definition": "How far the worst monitored parameter is from its trip limit, measured against its own healthy "
+        "baseline (median of its first 6 weeks). 100% = at baseline, 0% = at trip, negative = beyond trip. "
+        "Amber band ends at the highest alarm margin across parameters.",
+        "formula": "Higher-is-worse: (trip - value) / (trip - baseline) x 100; lower-is-worse: (value - trip) / (baseline - trip) x 100",
+        "source": "Condition History (condition_weekly, param_limits)",
+        "refresh_frequency": "Weekly, per replay date",
+        "owner": "Reliability Engineer",
+    },
+    {
+        "kpi_name": "Estimated impact",
+        "definition": "Estimate of what a failure like this has cost, from earlier similar incidents. Never a known amount.",
+        "formula": "Median total_loss_kusd of incidents dated before the replay date, same eq_type_family (fallback eq_class, then all)",
+        "source": "Incident Database: Total Loss, Eq. Type Family",
+        "refresh_frequency": "Live (per replay date)",
+        "owner": "Plant Manager",
+    },
+    {
+        "kpi_name": "Emission estimate",
+        "definition": "Estimated CO2e from motor-driven equipment, from motor current. An estimate, not metered energy.",
+        "formula": "Per ON hour: sqrt(3) x MOTOR_VOLTAGE_KV x current x POWER_FACTOR (kWh); x GRID_EMISSION_FACTOR_KG_PER_KWH (kg CO2e). Factors are placeholders until set from official sources.",
+        "source": "Production Data: motor_current; config factors",
+        "refresh_frequency": "Daily",
+        "owner": "HSE",
+    },
 ]
 
 
@@ -561,6 +663,8 @@ def ingest_capa_preload_actions(conn):
         conn.execute("SELECT source_ref, id FROM problems WHERE source_type = 'rca'").fetchall()
     )
     created_at = datetime.utcnow().isoformat()
+    # A CAPA action is known from its RCA's failure date (replay rule, see schema actions.as_of_date).
+    failure_by_tag = dict(conn.execute("SELECT tag, failure_date FROM equipment").fetchall())
 
     rows = conn.execute(
         "SELECT id, rca_id, equipment_tag, action_text, plan_date, pic, status "
@@ -580,6 +684,7 @@ def ingest_capa_preload_actions(conn):
                 "due_date": _parse_capa_date(plan_date),
                 "status": CAPA_STATUS_MAP.get(status, "Open"),
                 "created_at": created_at,
+                "as_of_date": failure_by_tag.get(tag),
             }
         )
     insert_many(conn, "actions", action_rows)
@@ -630,6 +735,7 @@ def run_ingestion(verbose: bool = True):
 
     results = run_acceptance_checks(conn, ROOT_DIR)
     conn.close()
+    publish_built_db()
     return results
 
 

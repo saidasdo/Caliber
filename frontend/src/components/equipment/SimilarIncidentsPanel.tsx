@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import type { SimilarIncident } from "../../lib/types";
 import { formatDate } from "../../lib/format";
 import { Money } from "../ui/Money";
+import { StatusAsOfNote } from "../ui/StatusAsOfNote";
 
 const SENSOR_TAGS = new Set(["PU-2101B", "KO-3201", "PM-4405B", "HE-3301", "BL-5702"]);
 
@@ -10,6 +11,7 @@ const SENSOR_TAGS = new Set(["PU-2101B", "KO-3201", "PM-4405B", "HE-3301", "BL-5
 export function SimilarIncidentsPanel({ incidents }: { incidents: SimilarIncident[] }) {
   return (
     <div className="h-full border border-line bg-paper">
+      <StatusAsOfNote />
       <div className="border-b border-line px-2 py-1.5 text-12 font-semibold uppercase tracking-wide text-mute">
         Similar incidents
       </div>

@@ -30,21 +30,17 @@ import { SimilarIncidentsPanel } from "../components/equipment/SimilarIncidentsP
 import { SuggestedActionsPanel } from "../components/equipment/SuggestedActionsPanel";
 import { RcaEvidencePanel } from "../components/equipment/RcaEvidencePanel";
 import { EnergyProxyPanel } from "../components/equipment/EnergyProxyPanel";
+import { EmissionDetail, EmissionTile } from "../components/equipment/EmissionTile";
 
 const GAUGE_SPECS = [
   { key: "availability" as const, title: "Availability", min: 0, max: 100, unit: "%" },
-  { key: "health_margin" as const, title: "Health margin to trip", min: -20, max: 100, unit: "%" },
+  { key: "health_margin" as const, title: "Health margin to trip", min: -20, max: 120, unit: "%" },
   { key: "production_vs_normal" as const, title: "Production vs normal", min: 0, max: 150, unit: "%" },
 ];
 const GAUGE_COLOR_STOPS: Record<string, [number, string][]> = {
   availability: [
     [0.9, colors.red],
     [0.99, colors.amber],
-    [1, colors.green],
-  ],
-  health_margin: [
-    [0.167, colors.red],
-    [0.333, colors.amber],
     [1, colors.green],
   ],
   production_vs_normal: [
@@ -62,7 +58,19 @@ const SIGNAL_LABEL: Record<Signal, string> = {
   plant_rate: "Plant rate",
 };
 
-type ModalKey = "gauges" | "statusTimeline" | "trends" | "energyProxy";
+type ModalKey = "gauges" | "statusTimeline" | "trends" | "energyProxy" | "emission";
+
+// Health margin bands come from the response, not fixed numbers: red below 0 (beyond trip),
+// amber from 0 up to the highest alarm margin across parameters, green above it (engine/gauges.py).
+function healthMarginStops(min: number, max: number, alarmMarginPct: number | null): [number, string][] {
+  const fraction = (v: number) => Math.min(1, Math.max(0, (v - min) / (max - min)));
+  if (alarmMarginPct == null) return [[fraction(0), colors.red], [1, colors.green]];
+  return [
+    [fraction(0), colors.red],
+    [fraction(alarmMarginPct), colors.amber],
+    [1, colors.green],
+  ];
+}
 
 // Two tabs on one machine. Overview (the default) is the glance: gauges, status timeline,
 // the rotating trends and the energy proxy, sized to fill the window. Action (?view=action)
@@ -73,15 +81,15 @@ export function EquipmentPage() {
   const { tag = "" } = useParams<{ tag: string }>();
   const [searchParams] = useSearchParams();
   const view = searchParams.get("view") === "action" ? "action" : "overview";
-  const { replayDate, role, overview, setActionDue } = useAppState();
+  const { replayDate, role, setActionDue } = useAppState();
   const [modal, setModal] = useState<ModalKey | null>(null);
   // Bumped when a suggested action is proposed or rejected, so the beep and the list refresh.
   const [actionsVersion, setActionsVersion] = useState(0);
   const onActionsChanged = () => setActionsVersion((v) => v + 1);
 
   const equipment = useFetch(() => getEquipment(tag, replayDate), [tag, replayDate, role]);
-  const timeline = useFetch(() => getEquipmentStatusTimeline(tag), [tag]);
-  const weekly = useFetch(() => getEquipmentWeeklySeries(tag), [tag]);
+  const timeline = useFetch(() => getEquipmentStatusTimeline(tag, replayDate), [tag, replayDate]);
+  const weekly = useFetch(() => getEquipmentWeeklySeries(tag, replayDate), [tag, replayDate]);
   const suggested = useFetch(
     () => getEquipmentSuggestedActions(tag, replayDate),
     [tag, replayDate, role, actionsVersion],
@@ -131,17 +139,17 @@ export function EquipmentPage() {
   const { gauges } = eq;
   const widgets = ROLE_CONFIG[role].equipment;
   const show = (key: EquipmentWidgetKey) => widgets[key] !== "hidden";
-  const priorityRow =
-    overview.status === "ready" ? overview.data.priority_queue.find((r) => r.equipment_tag === tag) : undefined;
 
   const alarmHours =
     timeline.status === "ready" ? timeline.data.distribution.find((d) => d.lane === "alarm")?.duration_hours : undefined;
 
   const weeklyParams = weekly.status === "ready" ? weekly.data.parameters : [];
+  const axisWeeks = weekly.status === "ready" ? weekly.data.axis_weeks : 0;
+  const timelineData = timeline.status === "ready" ? timeline.data : null;
   const weeklySlides: RotatingSlide[] = weeklyParams.map((p) => ({
     key: `w-${p.parameter}`,
     caption: p.parameter,
-    content: <WeeklyParameterChart series={p} replayDate={replayDate} compact />,
+    content: <WeeklyParameterChart series={p} axisWeeks={axisWeeks} compact />,
   }));
   const hourlySlides: RotatingSlide[] = eq.has_hourly_coverage
     ? eq.hourly_signals.map((sig) => ({
@@ -159,8 +167,13 @@ export function EquipmentPage() {
       }))
     : [];
 
+  // Overview is taller than the window on purpose (the page scrolls): every number needs room.
+  // Action keeps the single-window layout so its problem group scrolls inside itself.
+  const rootClass =
+    view === "action" ? "flex h-full flex-col gap-1 overflow-hidden pb-14" : "flex flex-col gap-1 pb-14";
+
   return (
-    <div className="flex h-full flex-col gap-1 overflow-hidden pb-14">
+    <div className={rootClass}>
       <div className="shrink-0">
         <IdentityStrip equipment={eq} />
       </div>
@@ -171,7 +184,7 @@ export function EquipmentPage() {
             <div className="grid shrink-0 grid-cols-12 gap-1">
               {show("impactSummary") && (
                 <div className={show("diagnosisOneLiner") ? "col-span-6" : "col-span-12"}>
-                  <ImpactSummaryCard equipment={eq} priorityRow={priorityRow} />
+                  <ImpactSummaryCard equipment={eq} />
                 </div>
               )}
               {show("diagnosisOneLiner") && (
@@ -184,7 +197,7 @@ export function EquipmentPage() {
 
           {/* The three main gauges, biggest on the page */}
           {show("gauges") && (
-            <div className="grid min-h-0 flex-[3] grid-cols-3 gap-1">
+            <div className="grid h-[200px] shrink-0 grid-cols-3 gap-1">
               {GAUGE_SPECS.map((g) => (
                 <ChartTile key={g.key} label={g.title} onClick={() => setModal("gauges")}>
                   <GaugeCard
@@ -193,7 +206,11 @@ export function EquipmentPage() {
                     min={g.min}
                     max={g.max}
                     unit={g.unit}
-                    colorStops={GAUGE_COLOR_STOPS[g.key]}
+                    colorStops={
+                      g.key === "health_margin"
+                        ? healthMarginStops(g.min, g.max, gauges.health_margin.alarm_margin_pct)
+                        : GAUGE_COLOR_STOPS[g.key]
+                    }
                     compact
                   />
                 </ChartTile>
@@ -201,25 +218,9 @@ export function EquipmentPage() {
             </div>
           )}
 
-          {show("statusTimeline") && (
-            <div className="min-h-0 flex-[1.4]">
-              <ChartTile
-                label="Status timeline"
-                sublabel={alarmHours != null ? `${alarmHours.toFixed(0)}h in alarm` : undefined}
-                onClick={() => setModal("statusTimeline")}
-              >
-                <MachineStatusTimeline
-                  segments={timeline.status === "ready" ? timeline.data.segments : []}
-                  hasHourlyCoverage={eq.has_hourly_coverage}
-                  compact
-                />
-              </ChartTile>
-            </div>
-          )}
-
           {/* Each panel cycles its own charts; click for all of them */}
           {(show("weeklyCharts") || show("hourlyTrend")) && (
-            <div className="grid min-h-0 flex-[3] grid-cols-2 gap-1">
+            <div className="grid h-[330px] shrink-0 grid-cols-2 gap-1">
               {show("weeklyCharts") && (
                 <RotatingPanel label="Weekly trend" slides={weeklySlides} onOpen={() => setModal("trends")} />
               )}
@@ -230,9 +231,39 @@ export function EquipmentPage() {
           )}
 
           {show("energyProxy") && (
-            <div className="min-h-0 flex-[2]">
-              <ChartTile label="Energy proxy" sublabel="motor load index" onClick={() => setModal("energyProxy")}>
-                <EnergyProxyPanel tag={tag} compact />
+            <div className="grid h-[300px] shrink-0 grid-cols-12 gap-1">
+              <div className="col-span-8">
+                <ChartTile label="Energy proxy" sublabel="motor load index" onClick={() => setModal("energyProxy")}>
+                  <EnergyProxyPanel tag={tag} replayDate={replayDate} compact />
+                </ChartTile>
+              </div>
+              <div className="col-span-4">
+                <ChartTile
+                  label="Emission estimate"
+                  sublabel="estimate from motor current, not metered; factors are placeholders"
+                  onClick={() => setModal("emission")}
+                >
+                  <EmissionTile emission={eq.emission} />
+                </ChartTile>
+              </div>
+            </div>
+          )}
+
+          {show("statusTimeline") && (
+            <div className="h-[200px] shrink-0">
+              <ChartTile
+                label="Status timeline"
+                sublabel={alarmHours != null ? `${alarmHours.toFixed(0)}h in alarm` : undefined}
+                onClick={() => setModal("statusTimeline")}
+              >
+                <MachineStatusTimeline
+                  segments={timelineData?.segments ?? []}
+                  windowStart={timelineData?.window_start ?? null}
+                  axisHours={timelineData?.axis_hours ?? 0}
+                  replayDate={replayDate}
+                  hasHourlyCoverage={eq.has_hourly_coverage}
+                  compact
+                />
               </ChartTile>
             </div>
           )}
@@ -252,7 +283,7 @@ export function EquipmentPage() {
               {show("suggestedActions") && (
                 <SuggestedActionsPanel tag={tag} replayDate={replayDate} onChange={onActionsChanged} />
               )}
-              {show("rcaEvidence") && <RcaEvidencePanel rca={eq.linked_rca} />}
+              {show("rcaEvidence") && <RcaEvidencePanel rca={eq.linked_rca} pastRcas={eq.past_rcas} />}
             </div>
           </div>
         ) : (
@@ -283,7 +314,10 @@ export function EquipmentPage() {
           <div className="grid grid-cols-12 gap-1 p-1">
             <div className="col-span-9">
               <MachineStatusTimeline
-                segments={timeline.status === "ready" ? timeline.data.segments : []}
+                segments={timelineData?.segments ?? []}
+                windowStart={timelineData?.window_start ?? null}
+                axisHours={timelineData?.axis_hours ?? 0}
+                replayDate={replayDate}
                 hasHourlyCoverage={eq.has_hourly_coverage}
               />
             </div>
@@ -299,15 +333,20 @@ export function EquipmentPage() {
       {modal === "trends" && (
         <Modal title="Trends" onClose={() => setModal(null)} wide>
           <div className="space-y-2 p-1">
-            {weekly.status === "ready" && <WeeklySmallMultiples parameters={weeklyParams} replayDate={replayDate} />}
+            {weekly.status === "ready" && <WeeklySmallMultiples parameters={weeklyParams} axisWeeks={axisWeeks} />}
             <HourlyTrendChart tag={tag} replayDate={replayDate} hasHourlyCoverage={eq.has_hourly_coverage} />
           </div>
+        </Modal>
+      )}
+      {modal === "emission" && (
+        <Modal title="Emission estimate" onClose={() => setModal(null)}>
+          <EmissionDetail emission={eq.emission} />
         </Modal>
       )}
       {modal === "energyProxy" && (
         <Modal title="Energy proxy" onClose={() => setModal(null)} wide>
           <div className="p-1">
-            <EnergyProxyPanel tag={tag} />
+            <EnergyProxyPanel tag={tag} replayDate={replayDate} />
           </div>
         </Modal>
       )}

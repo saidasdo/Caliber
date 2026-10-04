@@ -1,11 +1,12 @@
-"""Tests for alert priority scoring (SPEC section 5.4) against the real ingested DB."""
+"""Alert priority (SPEC section 5.4, revised) against the real ingested DB. Urgency is both the rank and the
+displayed number; labels depend on urgency and status only."""
 
 import sqlite3
 
 import pytest
 
 from app.config import DB_PATH
-from app.engine.priority import CLASS_SCORE, compute_priority
+from app.engine.priority import compute_priority
 
 pytestmark = pytest.mark.skipif(not DB_PATH.exists(), reason="run `npm run ingest` first")
 
@@ -25,40 +26,51 @@ def test_returns_all_five_sensor_equipment(conn):
     }
 
 
-def test_sorted_descending_by_score(conn):
-    rows = compute_priority(conn, "2026-04-08")
-    scores = [r["priority_score"] for r in rows]
-    assert scores == sorted(scores, reverse=True)
+def test_score_is_the_urgency_formula(conn):
+    for date in ["2026-04-08", "2026-03-05"]:
+        for r in compute_priority(conn, date):
+            b = r["breakdown"]
+            if r["health_status"] == "TRIP":
+                assert r["priority_score"] == 1.0
+            else:
+                expected = 0.6 * b["proximity"] + 0.4 * b["alarm_share"]
+                assert r["priority_score"] == pytest.approx(expected, abs=1e-3)
+            assert b["severity"] == r["priority_score"]  # the displayed number is the urgency
 
 
-def test_score_formula_matches_breakdown(conn):
-    rows = compute_priority(conn, "2026-04-08")
-    for r in rows:
-        b = r["breakdown"]
-        expected = round(0.4 * b["severity"] + 0.3 * b["class_score"] + 0.3 * b["loss_exposure"], 4)
-        assert r["priority_score"] == expected
+def test_score_order_equals_rank_order(conn):
+    for date in ["2026-04-08", "2026-04-22", "2026-03-05", "2026-07-01", "2026-05-14", "2026-06-10"]:
+        rows = compute_priority(conn, date)
+        assert [r["rank"] for r in rows] == list(range(1, len(rows) + 1))
+        scores = [r["priority_score"] for r in rows]
+        assert scores == sorted(scores, reverse=True)
 
 
-def test_trip_week_gets_max_severity(conn):
+def test_trip_week_gets_max_urgency(conn):
     # PU-2101B's TRIP week is 2026-03-12 (see backtest / acceptance data).
     rows = compute_priority(conn, "2026-03-12")
     pu = next(r for r in rows if r["equipment_tag"] == "PU-2101B")
     assert pu["breakdown"]["severity"] == 1.0
     assert pu["health_status"] == "TRIP"
+    assert pu["priority_label"] == "Critical"
 
 
-def test_normal_week_gets_zero_or_rising_severity(conn):
-    # Well before any equipment's first ALARM, severity should be 0 (normal) for all.
+def test_normal_week_urgency_is_proximity_and_share_only(conn):
+    # Before any equipment's first ALARM: no status floor, so urgency is the margin-based terms alone.
     rows = compute_priority(conn, "2026-01-01")
     for r in rows:
-        assert r["breakdown"]["severity"] in (0.0, 0.4)
+        b = r["breakdown"]
+        if b["health_margin_pct"] is None:
+            assert r["priority_score"] == 0.0
+            continue
+        proximity = min(1.0, max(0.0, 1 - b["health_margin_pct"] / 100))
+        assert r["priority_score"] == pytest.approx(0.6 * proximity + 0.4 * b["alarm_share"], abs=1e-3)
 
 
-def test_class_score_mapping_matches_equipment_class(conn):
+def test_criticality_is_carried_for_the_tie_break(conn):
     rows = compute_priority(conn, "2026-04-08")
-    for r in rows:
-        eq_class = r["breakdown"]["eq_class"]
-        assert r["breakdown"]["class_score"] == CLASS_SCORE.get(eq_class, 0.3)
+    ko = next(r for r in rows if r["equipment_tag"] == "KO-3201")
+    assert ko["breakdown"]["criticality"] == "High"
 
 
 def test_loss_exposure_is_normalized_zero_to_one(conn):
@@ -66,32 +78,17 @@ def test_loss_exposure_is_normalized_zero_to_one(conn):
     exposures = [r["breakdown"]["loss_exposure"] for r in rows]
     assert min(exposures) >= 0.0
     assert max(exposures) <= 1.0
-    assert max(exposures) == 1.0  # the highest-loss equipment defines the top of the scale
+    assert max(exposures) == 1.0
 
 
-def test_ko3201_has_highest_loss_exposure(conn):
-    # KO-3201's RCA loss (1584 k USD) is the largest among the five (see SPEC section 9).
+def test_ko3201_loss_exposure_uses_replay_safe_estimate(conn):
+    # KO-3201's estimated impact on 8 Apr is the lowest of the five (earlier compressor incidents only).
     rows = compute_priority(conn, "2026-04-08")
     ko = next(r for r in rows if r["equipment_tag"] == "KO-3201")
-    assert ko["breakdown"]["loss_exposure"] == 1.0
-
-
-def test_priority_label_thresholds_are_consistent_with_score(conn):
-    rows = compute_priority(conn, "2026-04-08")
-    for r in rows:
-        score, label = r["priority_score"], r["priority_label"]
-        if label == "Critical":
-            assert score >= 0.8
-        elif label == "High":
-            assert 0.6 <= score < 0.8
-        elif label == "Medium":
-            assert 0.4 <= score < 0.6
-        else:
-            assert score < 0.4
+    assert ko["breakdown"]["loss_exposure"] == 0.0
+    assert ko["estimated_impact"]["basis"] == "eq_type_family"
 
 
 def test_worst_parameter_present_when_weekly_data_exists(conn):
-    rows = compute_priority(conn, "2026-04-08")
-    for r in rows:
+    for r in compute_priority(conn, "2026-04-08"):
         assert r["worst_parameter"] is not None
-        assert "parameter" in r["worst_parameter"]

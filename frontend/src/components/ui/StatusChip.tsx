@@ -12,7 +12,7 @@ const PRIORITY_STYLES: Record<PriorityLabel, string> = {
   Critical: "bg-red text-white",
   High: "bg-orange text-white",
   Medium: "bg-amber text-ink",
-  Low: "bg-line text-ink",
+  Normal: "bg-line text-ink",
 };
 
 function ChipBase({ className, label }: { className: string; label: string }) {

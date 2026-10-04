@@ -71,7 +71,14 @@ def test_rca_problem_priority_label_is_computed_live_not_stored(conn):
         None,
     )
     assert ko_rca is not None
-    assert ko_rca["priority_label"] == "Critical"
+    # Live: the label must equal what the priority engine computes for this replay date.
+    from app.engine.priority import compute_priority
+
+    engine_conn = sqlite3.connect(DB_PATH)
+    engine_conn.row_factory = sqlite3.Row
+    from_engine = next(p for p in compute_priority(engine_conn, "2026-04-08") if p["equipment_tag"] == "KO-3201")
+    engine_conn.close()
+    assert ko_rca["priority_label"] == from_engine["priority_label"]
 
 
 def test_source_type_filter():

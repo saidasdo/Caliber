@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { FollowUpPipeline as FollowUpPipelineData } from "../../lib/types";
+import { StatusAsOfNote } from "../ui/StatusAsOfNote";
 
 // SPEC section 5.1: "Follow-up pipeline: incident counts per Overall Status (...) plus
 // overdue counts." Order follows the process flow, not the count.
@@ -15,14 +16,18 @@ const STATUS_ORDER = [
 export function FollowUpPipeline({
   data,
   headerAction,
+  hideOverdue,
 }: {
   data: FollowUpPipelineData;
   headerAction?: ReactNode;
+  // The overview shows RCA overdue in Follow-up health already; the pop-up keeps it here.
+  hideOverdue?: boolean;
 }) {
   const max = Math.max(...Object.values(data.by_status), 1);
 
   return (
     <div className="flex h-full flex-col border border-line bg-paper">
+      <StatusAsOfNote />
       <div className="flex items-center justify-between border-b border-line px-2 py-1.5 text-12 font-semibold uppercase tracking-wide text-mute">
         Follow-up pipeline
         {headerAction}
@@ -31,7 +36,7 @@ export function FollowUpPipeline({
         {STATUS_ORDER.map((status) => {
           const count = data.by_status[status] ?? 0;
           return (
-            <li key={status} className="px-2 py-1">
+            <li key={status} className="px-2 py-0.5">
               <div className="flex items-center justify-between text-12">
                 <span className="text-mute">{status}</span>
                 <span className="tabular font-medium text-ink">{count}</span>
@@ -43,14 +48,16 @@ export function FollowUpPipeline({
           );
         })}
       </ul>
-      <div className="mt-auto border-t border-line px-2 py-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-12 text-mute">RCA PROCESS overdue</span>
-          <span className="tabular text-15 font-display font-bold text-orange">
-            {data.rca_process_overdue}
-          </span>
+      {!hideOverdue && (
+        <div className="mt-auto border-t border-line px-2 py-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-12 text-mute">RCA PROCESS overdue</span>
+            <span className="tabular text-15 font-display font-bold text-orange">
+              {data.rca_process_overdue}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

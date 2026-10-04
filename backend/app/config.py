@@ -39,3 +39,12 @@ SIGNAL_MAP = {
     "TEMP": "temperature",
     "AMP": "motor_current",
 }
+
+# Emission estimate (energy proxy, motor-driven equipment only). These three are PLACEHOLDERS
+# so the estimate can be computed and shown end to end. The team must replace them with values
+# from official sources before any number leaves the prototype: the motor nameplate voltage,
+# a measured or nameplate power factor, and the official grid emission factor for the plant's
+# location. They are also written to the assumptions table and shown on the Data page.
+MOTOR_VOLTAGE_KV = 6.6
+POWER_FACTOR = 0.85
+GRID_EMISSION_FACTOR_KG_PER_KWH = 0.5

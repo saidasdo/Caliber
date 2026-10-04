@@ -161,7 +161,7 @@ def check_diagnosis_on_replay_date(conn, results):
     rule_ok = bool(diagnosis["rule_name"]) and "lube oil water ingress" in diagnosis["rule_name"].lower()
     confidence_ok = diagnosis["confidence"] in ("High", "Medium")
 
-    similar = find_similar(conn, "KO-3201")
+    similar = find_similar(conn, "KO-3201", "2026-04-08")
     compressor_case = next((s for s in similar if s["eq_type_family"] == "compressor"), None)
 
     passed = rule_ok and confidence_ok and compressor_case is not None

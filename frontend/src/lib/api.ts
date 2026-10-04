@@ -23,6 +23,7 @@ import type {
   SuggestedActionsResponse,
   TrackedAction,
   WeeklySeries,
+  Assumption,
 } from "./types";
 import { getRequestHeaders } from "./requestScope";
 
@@ -81,23 +82,28 @@ export function getEquipment(tag: string, replayDate: string): Promise<Equipment
   );
 }
 
-export function getEquipmentStatusTimeline(tag: string): Promise<StatusTimeline> {
-  return getJson(`/api/equipment/${encodeURIComponent(tag)}/status-timeline`);
-}
-
-export function getEquipmentWeeklySeries(tag: string): Promise<WeeklySeries> {
-  return getJson(`/api/equipment/${encodeURIComponent(tag)}/weekly-series`);
-}
-
-export function getEquipmentSeries(tag: string, signal: Signal): Promise<HourlySeries> {
+// Every live read takes the replay date: the backend never returns anything after it (SPEC 4).
+export function getEquipmentStatusTimeline(tag: string, replayDate: string): Promise<StatusTimeline> {
   return getJson(
-    `/api/equipment/${encodeURIComponent(tag)}/series?signal=${encodeURIComponent(signal)}`,
+    `/api/equipment/${encodeURIComponent(tag)}/status-timeline?replay_date=${encodeURIComponent(replayDate)}`,
   );
 }
 
-export function getEquipmentAnomalies(tag: string, signal: Signal): Promise<AnomalyResponse> {
+export function getEquipmentWeeklySeries(tag: string, replayDate: string): Promise<WeeklySeries> {
   return getJson(
-    `/api/equipment/${encodeURIComponent(tag)}/anomalies?signal=${encodeURIComponent(signal)}`,
+    `/api/equipment/${encodeURIComponent(tag)}/weekly-series?replay_date=${encodeURIComponent(replayDate)}`,
+  );
+}
+
+export function getEquipmentSeries(tag: string, signal: Signal, replayDate: string): Promise<HourlySeries> {
+  return getJson(
+    `/api/equipment/${encodeURIComponent(tag)}/series?signal=${encodeURIComponent(signal)}&replay_date=${encodeURIComponent(replayDate)}`,
+  );
+}
+
+export function getEquipmentAnomalies(tag: string, signal: Signal, replayDate: string): Promise<AnomalyResponse> {
+  return getJson(
+    `/api/equipment/${encodeURIComponent(tag)}/anomalies?signal=${encodeURIComponent(signal)}&replay_date=${encodeURIComponent(replayDate)}`,
   );
 }
 
@@ -223,6 +229,10 @@ export function getKpiDictionary(): Promise<KpiDictionaryResponse> {
   return getJson("/api/kpi-dictionary");
 }
 
+export function getAssumptions(): Promise<{ results: Assumption[] }> {
+  return getJson("/api/assumptions");
+}
+
 export function getDataQuality(): Promise<DataQualityResponse> {
   return getJson("/api/data-quality");
 }
@@ -231,8 +241,10 @@ export function getProcessFlags(replayDate: string): Promise<ProcessFlagsRespons
   return getJson(`/api/process-flags?replay_date=${encodeURIComponent(replayDate)}`);
 }
 
-export function getEnergyProxy(tag: string): Promise<EnergyProxyResponse> {
-  return getJson(`/api/equipment/${encodeURIComponent(tag)}/energy-proxy`);
+export function getEnergyProxy(tag: string, replayDate: string): Promise<EnergyProxyResponse> {
+  return getJson(
+    `/api/equipment/${encodeURIComponent(tag)}/energy-proxy?replay_date=${encodeURIComponent(replayDate)}`,
+  );
 }
 
 export function logRoleSwitch(body: {

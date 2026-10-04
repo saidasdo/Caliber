@@ -1,29 +1,44 @@
-"""Alert priority scoring (SPEC section 5.4).
+"""Alert priority (SPEC section 5.4, revised): one urgency score that is both the rank and the number
+shown.
 
-priority_score = 0.4 * severity + 0.3 * class + 0.3 * loss_exposure, each normalized 0 to 1.
-Thresholds for the Critical/High/Medium/Low labels are not specified in SPEC; documented here
-as an assumption pending product feedback.
+urgency = 0.6 * proximity + 0.4 * alarm_share, where
+- proximity   = clip(1 - worst_health_margin_pct / 100, 0, 1), replay-safe, baseline-relative
+- alarm_share = parameters past their alarm limit / parameters monitored
+- TRIP = 1.0 (the machine has tripped; no other floor applies)
+
+Rank: by urgency, descending. Ties only: Criticality (High > Medium > Low), then estimated impact.
+Labels come from urgency and status alone: Critical if urgency >= 0.7 or TRIP; High if >= 0.5;
+Medium if >= 0.25 or status ALARM; otherwise Normal. Class and loss never change a label.
+
+Thresholds and weights are an assumption pending product feedback (SPEC does not define them).
 """
 
+import math
 import sqlite3
 
 from app.engine.diagnosis import diagnose
+from app.engine.gauges import health_margin
+from app.engine.impact import estimate_impact
 from app.engine.replay import resolve_week
 
-CLASS_SCORE = {"A": 1.0, "B": 0.6, "C": 0.3}
+W_PROXIMITY = 0.6
+W_SHARE = 0.4
 
-LABEL_THRESHOLDS = [
-    (0.8, "Critical"),
-    (0.6, "High"),
-    (0.4, "Medium"),
-]
+CRITICAL_URGENCY = 0.7
+HIGH_URGENCY = 0.5
+MEDIUM_URGENCY = 0.25
+
+CRITICALITY_RANK = {"High": 3, "Medium": 2, "Low": 1}
 
 
-def _label(score: float) -> str:
-    for threshold, label in LABEL_THRESHOLDS:
-        if score >= threshold:
-            return label
-    return "Low"
+def _label(urgency: float, status: str | None) -> str:
+    if status == "TRIP" or urgency >= CRITICAL_URGENCY:
+        return "Critical"
+    if urgency >= HIGH_URGENCY:
+        return "High"
+    if urgency >= MEDIUM_URGENCY or status == "ALARM":
+        return "Medium"
+    return "Normal"
 
 
 def _weeks_in_current_status(conn: sqlite3.Connection, tag: str, replay_date: str) -> int | None:
@@ -45,47 +60,67 @@ def _weeks_in_current_status(conn: sqlite3.Connection, tag: str, replay_date: st
     return count
 
 
-def _severity(week_state: dict | None) -> tuple[float, str]:
+def _past_alarm(parameter: dict) -> bool:
+    """A parameter is past its alarm limit when its value is on the alarm-or-worse side."""
+    if parameter["alarm"] is None or parameter["value"] is None:
+        return False
+    if parameter["direction"] == "higher_is_worse":
+        return parameter["value"] >= parameter["alarm"]
+    return parameter["value"] <= parameter["alarm"]
+
+
+def _urgency(week_state: dict | None, margin_pct: float | None) -> dict:
+    """urgency = 0.6 x proximity + 0.4 x alarm share; TRIP is 1.0. Returns the terms as well."""
     if week_state is None:
-        return 0.0, "no data"
-    status = week_state["health_status"]
-    if status == "TRIP":
-        return 1.0, "TRIP"
-    if status == "ALARM":
-        return 0.7, "ALARM"
-    rising_toward_alarm = any(
-        p["trend"] == "rising" and p["alarm"] is not None and p["direction"] == "higher_is_worse"
-        or p["trend"] == "falling" and p["alarm"] is not None and p["direction"] == "lower_is_worse"
-        for p in week_state["parameters"]
+        return {"urgency": 0.0, "proximity": 0.0, "alarm_share": 0.0, "past_alarm": 0, "total": 0}
+    params = week_state["parameters"]
+    past = sum(1 for p in params if _past_alarm(p))
+    total = len(params)
+    share = past / total if total else 0.0
+    proximity = 0.0 if margin_pct is None else min(1.0, max(0.0, 1 - margin_pct / 100))
+    urgency = 1.0 if week_state["health_status"] == "TRIP" else W_PROXIMITY * proximity + W_SHARE * share
+    return {"urgency": urgency, "proximity": proximity, "alarm_share": share, "past_alarm": past, "total": total}
+
+
+def _log_exposure(values: dict[str, float | None]) -> dict[str, float]:
+    """Log-scale min-max of the estimated impact across the equipment: 0 for the smallest, 1 for the
+    largest. Shown in the breakdown; it is a tie-break, not part of the urgency."""
+    logs = {tag: math.log(v) for tag, v in values.items() if v is not None and v > 0}
+    if not logs:
+        return {tag: 0.0 for tag in values}
+    lo, hi = min(logs.values()), max(logs.values())
+    span = (hi - lo) or 1.0
+    return {tag: (logs[tag] - lo) / span if tag in logs else 0.0 for tag in values}
+
+
+def _rank_key(row: dict) -> tuple:
+    """Urgency, then Criticality, then estimated impact. Only urgency is the displayed number; the other
+    two only separate machines with exactly the same urgency."""
+    return (
+        row["priority_score"],
+        CRITICALITY_RANK.get(row["breakdown"]["criticality"], 0),
+        row["estimated_impact"]["value_kusd"] or 0.0,
     )
-    if rising_toward_alarm:
-        return 0.4, "rising trend toward alarm"
-    return 0.0, "normal"
 
 
 def compute_priority(conn: sqlite3.Connection, replay_date: str) -> list[dict]:
     equipment = conn.execute(
-        "SELECT tag, name, plant_code, eq_class FROM equipment WHERE has_sensor_data = 1"
+        "SELECT tag, name, plant_code, eq_class, criticality, eq_type FROM equipment WHERE has_sensor_data = 1"
     ).fetchall()
 
-    loss_by_tag = dict(
-        conn.execute(
-            "SELECT equipment_tag, estimated_loss_kusd FROM performance_summary"
-        ).fetchall()
-    )
-    losses = [v for v in loss_by_tag.values() if v is not None]
-    loss_min, loss_max = (min(losses), max(losses)) if losses else (0, 1)
-    loss_span = (loss_max - loss_min) or 1
+    impact_by_tag = {tag: estimate_impact(conn, tag, replay_date) for tag, *_ in equipment}
+    exposure = _log_exposure({tag: i["value_kusd"] for tag, i in impact_by_tag.items()})
 
     results = []
-    for tag, name, plant_code, eq_class in equipment:
+    for tag, name, plant_code, eq_class, criticality, eq_type in equipment:
         week_state = resolve_week(conn, tag, replay_date)
-        severity, severity_reason = _severity(week_state)
-        class_score = CLASS_SCORE.get(eq_class, 0.3)
-        loss_exposure = (loss_by_tag.get(tag, loss_min) - loss_min) / loss_span
+        margin = health_margin(conn, tag, replay_date)["value"]
+        terms = _urgency(week_state, margin)
+        impact = impact_by_tag[tag]
         diagnosis = diagnose(conn, tag, replay_date)
+        status = week_state["health_status"] if week_state else None
+        urgency = round(terms["urgency"], 4)
 
-        score = 0.4 * severity + 0.3 * class_score + 0.3 * loss_exposure
         worst_parameter = None
         if week_state and week_state["parameters"]:
             worst_parameter = max(
@@ -101,19 +136,27 @@ def compute_priority(conn: sqlite3.Connection, replay_date: str) -> list[dict]:
             {
                 "equipment_tag": tag,
                 "equipment_name": name,
+                "equipment_type": eq_type,
                 "plant_code": plant_code,
-                "priority_score": round(score, 4),
-                "priority_label": _label(score),
+                # The displayed number and the rank are the same value.
+                "priority_score": urgency,
+                "priority_label": _label(terms["urgency"], status),
                 "breakdown": {
-                    "severity": severity,
-                    "severity_reason": severity_reason,
-                    "class_score": class_score,
-                    "eq_class": eq_class,
-                    "loss_exposure": round(loss_exposure, 4),
+                    "urgency": urgency,
+                    # Kept for existing readers: the urgency is the severity the card shows.
+                    "severity": urgency,
+                    "proximity": round(terms["proximity"], 4),
+                    "alarm_share": round(terms["alarm_share"], 4),
+                    "parameters_past_alarm": terms["past_alarm"],
+                    "parameters_total": terms["total"],
+                    "health_margin_pct": margin,
+                    "criticality": criticality,
+                    "loss_exposure": round(exposure[tag], 4),
+                    "loss_exposure_raw_kusd": impact["value_kusd"],
                 },
-                "health_status": week_state["health_status"] if week_state else None,
+                "health_status": status,
                 "weeks_in_status": _weeks_in_current_status(conn, tag, replay_date),
-                "estimated_loss_kusd": loss_by_tag.get(tag),
+                "estimated_impact": impact,
                 "diagnosis_rule_name": diagnosis["rule_name"],
                 "diagnosis_confidence": diagnosis["confidence"],
                 "worst_parameter": (
@@ -129,7 +172,7 @@ def compute_priority(conn: sqlite3.Connection, replay_date: str) -> list[dict]:
                     else None
                 ),
                 "reason": (
-                    f"{tag}: {severity_reason}"
+                    f"{tag}: {status or 'no data'}"
                     + (
                         f", {worst_parameter['parameter']} {worst_parameter['value']} "
                         f"vs alarm {worst_parameter['alarm']}"
@@ -140,5 +183,7 @@ def compute_priority(conn: sqlite3.Connection, replay_date: str) -> list[dict]:
             }
         )
 
-    results.sort(key=lambda r: r["priority_score"], reverse=True)
+    results.sort(key=_rank_key, reverse=True)
+    for rank, row in enumerate(results, 1):
+        row["rank"] = rank
     return results

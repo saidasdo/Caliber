@@ -1,28 +1,20 @@
-"""Suggested actions from the diagnosis engine (SPEC section 5.7).
+"""Suggested actions from the diagnosis engine (SPEC section 5.7), as known on the replay date.
 
 "Suggested actions from the diagnosis (mapped per rule, taken from CAPA of the RCA with the
 same failure mode first, then generic defaults) only become tracked actions after an
 engineer clicks Approve." A suggestion is never persisted on its own; it is computed fresh
-from the current diagnosis every time this is called, and only Approve/Reject write anything
-to the database (see api/actions.py).
+from the diagnosis for the replay date, and only Approve/Reject/Propose write anything to the
+database (see api/actions.py).
+
+Replay rule: CAPA actions are only used from an RCA whose equipment failure date is before the
+replay date. Otherwise the generic action library (catalog/action_library.py) is used.
+Each suggestion says where it came from: "rca_capa" or "action_library".
 """
 
 import sqlite3
 
+from app.catalog.action_library import ACTION_LIBRARY
 from app.engine.diagnosis import _match_rule, diagnose
-
-# Fallback when no RCA matches the fired rule (never hit by the 5 RCA-linked equipment in this
-# dataset, since each rule has exactly one matching RCA here, but kept for equipment of the
-# same type with no RCA of its own, per SPEC 5.5's "also work for other equipment").
-GENERIC_DEFAULTS = {
-    "Seal leakage (pump)": "Inspect seal flush flow system and schedule seal replacement.",
-    "Lube oil water ingress, bearing distress (compressor)": (
-        "Inspect lube oil cooler for leaks and sample lube oil water content."
-    ),
-    "Motor bearing lubrication failure": "Inspect motor DE bearing lubrication and schedule re-grease.",
-    "Exchanger fouling": "Schedule tube bundle cleaning and inspect fouling rate.",
-    "Coupling misalignment": "Perform a laser alignment check on the coupling.",
-}
 
 
 def _rule_name_to_rca_id(conn: sqlite3.Connection) -> dict[str, int]:
@@ -45,8 +37,18 @@ def _rule_name_to_rca_id(conn: sqlite3.Connection) -> dict[str, int]:
     return mapping
 
 
-def get_suggested_actions(conn: sqlite3.Connection, tag: str, replay_date: str) -> dict:
-    diagnosis = diagnose(conn, tag, replay_date)
+def _rca_known_at(conn: sqlite3.Connection, rca_id: int, replay_date: str) -> bool:
+    row = conn.execute(
+        "SELECT e.failure_date FROM equipment e WHERE e.rca_id = ?", (rca_id,)
+    ).fetchone()
+    return row is not None and row[0] is not None and row[0] < replay_date
+
+
+def get_suggested_actions(
+    conn: sqlite3.Connection, tag: str, replay_date: str, diagnosis: dict | None = None
+) -> dict:
+    if diagnosis is None:
+        diagnosis = diagnose(conn, tag, replay_date)
     if not diagnosis["confidence"]:
         return {"rule_name": None, "confidence": None, "suggestions": []}
 
@@ -54,7 +56,7 @@ def get_suggested_actions(conn: sqlite3.Connection, tag: str, replay_date: str) 
     rca_id = _rule_name_to_rca_id(conn).get(rule_name)
 
     suggestions = []
-    if rca_id is not None:
+    if rca_id is not None and _rca_known_at(conn, rca_id, replay_date):
         rows = conn.execute(
             "SELECT id, action_text, pic, plan_date FROM capa_actions "
             "WHERE rca_id = ? AND action_category = 'corrective' ORDER BY id",
@@ -65,6 +67,7 @@ def get_suggested_actions(conn: sqlite3.Connection, tag: str, replay_date: str) 
                 {
                     "source_capa_action_id": capa_id,
                     "action_text": action_text,
+                    "category": "corrective",
                     "suggested_pic": pic,
                     "suggested_due_date": plan_date,
                     "source": "rca_capa",
@@ -72,15 +75,15 @@ def get_suggested_actions(conn: sqlite3.Connection, tag: str, replay_date: str) 
             )
 
     if not suggestions:
-        default_text = GENERIC_DEFAULTS.get(rule_name)
-        if default_text:
+        for item in ACTION_LIBRARY.get(rule_name, []):
             suggestions.append(
                 {
                     "source_capa_action_id": None,
-                    "action_text": default_text,
+                    "action_text": item["text"],
+                    "category": item["category"],
                     "suggested_pic": None,
                     "suggested_due_date": None,
-                    "source": "generic_default",
+                    "source": "action_library",
                 }
             )
 

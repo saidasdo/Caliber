@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAppState } from "../../state/AppStateContext";
 import { getActions, escalateAction } from "../../lib/api";
 import { useFetch } from "../../lib/useFetch";
+import { StatusAsOfNote } from "../ui/StatusAsOfNote";
 
 // Phase 10 section 2 (Executive Overview) / section 4 (action rights: "Executive: ... press
 // Escalate on overdue actions; escalated items appear at the top of the plant manager's
@@ -29,6 +30,7 @@ export function OverdueEscalations() {
 
   return (
     <div className="border border-line bg-paper">
+      <StatusAsOfNote />
       <div className="border-b border-line px-2 py-1.5 text-12 font-semibold uppercase tracking-wide text-mute">
         Overdue escalations
       </div>

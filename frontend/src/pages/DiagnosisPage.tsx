@@ -31,7 +31,7 @@ export function DiagnosisPage() {
   }
   const tags = TAGS
     .filter((t) => !plantFilter || priorityByTag.get(t)?.plant_code === plantFilter)
-    .sort((a, b) => (priorityByTag.get(b)?.priority_score ?? 0) - (priorityByTag.get(a)?.priority_score ?? 0));
+    .sort((a, b) => (priorityByTag.get(a)?.rank ?? 99) - (priorityByTag.get(b)?.rank ?? 99));
 
   return (
     <div className="flex flex-col gap-1.5">

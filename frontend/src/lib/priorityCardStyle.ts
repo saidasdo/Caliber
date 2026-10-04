@@ -40,7 +40,7 @@ const STYLES: Record<PriorityLabel, PriorityCardStyle> = {
     body: "text-ink/75",
     invertedChip: true,
   },
-  Low: PLAIN,
+  Normal: PLAIN,
 };
 
 export function priorityCardStyle(label: PriorityLabel | null | undefined): PriorityCardStyle {

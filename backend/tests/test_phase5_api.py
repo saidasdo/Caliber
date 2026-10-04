@@ -52,4 +52,4 @@ def test_priority_queue_top_pick_is_explainable_via_breakdown():
     top = r.json()["priority_queue"][0]
     assert top["equipment_tag"] == "KO-3201"
     b = top["breakdown"]
-    assert round(0.4 * b["severity"] + 0.3 * b["class_score"] + 0.3 * b["loss_exposure"], 4) == top["priority_score"]
+    assert top["priority_score"] == pytest.approx(0.6 * b["proximity"] + 0.4 * b["alarm_share"], abs=1e-3)

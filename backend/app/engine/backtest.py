@@ -67,6 +67,9 @@ def run_backtest(conn: sqlite3.Connection) -> list[dict]:
                 "lead_time_hours": lead_hours,
                 "downtime_hours": downtime_hours,
                 "loss_kusd": loss_kusd,
+                # Downtime and loss are outcomes after the trip, not known at the time of the
+                # warning. The backtest is an after-the-fact analysis, so they are labeled as such.
+                "outcome_basis": "Actual outcome (after the trip)",
                 "weekly_health": [
                     {"week": w, "week_date": d, "health_status": s} for w, d, s in weeks
                 ],

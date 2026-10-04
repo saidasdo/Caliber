@@ -3,17 +3,69 @@ export interface KpiValue {
   previous: number;
 }
 
+export interface Assumption {
+  id: number;
+  area: string;
+  assumption_text: string;
+  rationale: string | null;
+  created_at: string | null;
+}
+
 export interface KpiBand {
   incidents: KpiValue;
   downtime_hours: KpiValue;
   loss_kusd?: KpiValue; // absent entirely when the viewing role can't see it
   open_follow_ups: KpiValue;
   equipment_in_alarm: KpiValue;
+  // Estimate from motor current for the motor-driven equipment, replay week. Not money.
+  emission_kg?: KpiValue & { breakdown?: EmissionBreakdownRow[] };
+  // Average production vs normal across equipment with hourly data on the replay date (null value =
+  // "No hourly data").
+  production_vs_normal?: ProductionKpi;
+  // Motor load index, replay week vs the week before, with the 7-day forecast direction.
+  energy_proxy?: EnergyKpi;
   period_days: number;
 }
 
+export interface EmissionBreakdownRow {
+  equipment_tag: string;
+  plant_code: string;
+  week_kg: number;
+  today_kg: number | null;
+}
+
+export interface ProductionKpi {
+  value: number | null;
+  previous: number | null;
+  count: number;
+  message: string | null;
+  breakdown: {
+    equipment_tag: string;
+    plant_code: string;
+    value: number;
+    previous: number | null;
+    baseline_plant_rate: number | null;
+  }[];
+}
+
+export interface EnergyKpi {
+  value: number | null;
+  previous: number | null;
+  forecast_next_7_days: number | null;
+  forecast_direction: "up" | "down" | "flat" | null;
+  message: string | null;
+  breakdown: {
+    equipment_tag: string;
+    plant_code: string;
+    week: number | null;
+    previous_week: number | null;
+    forecast_next_7_days: number | null;
+    forecast_direction: "up" | "down" | "flat" | null;
+  }[];
+}
+
 export type HealthStatus = "NORMAL" | "ALARM" | "TRIP" | null;
-export type PriorityLabel = "Critical" | "High" | "Medium" | "Low";
+export type PriorityLabel = "Critical" | "High" | "Medium" | "Normal";
 
 export type TrendDirection = "rising" | "falling" | "flat";
 export type LimitDirection = "higher_is_worse" | "lower_is_worse";
@@ -40,21 +92,36 @@ export interface WorstParameter {
 }
 
 export interface PriorityRow {
+  // 1 = highest. The engine's dominance order, not the raw score: use this for any ordering.
+  rank?: number;
   equipment_tag: string;
   equipment_name: string;
+  equipment_type?: string | null;
+  // Most advanced action state on this machine among actions known on the replay date.
+  action_status?: ActionStatusLabel;
   plant_code: string;
   priority_score: number;
   priority_label: PriorityLabel;
   breakdown: {
+    urgency?: number;
     severity: number;
     severity_reason: string;
+    health_margin_pct: number | null;
+    severity_floor: number;
+    proximity: number;
+    alarm_share: number;
+    parameters_past_alarm: number;
+    parameters_total: number;
     class_score: number;
+    class_source: "eq_class" | "criticality" | "default";
     eq_class: string | null;
+    criticality?: string | null;
     loss_exposure: number;
   };
   health_status: HealthStatus;
   weeks_in_status: number | null;
-  estimated_loss_kusd?: number | null; // absent entirely when the viewing role can't see it
+  estimated_impact?: EstimatedImpact | null; // absent entirely when the viewing role can't see it
+  reliability?: Reliability;
   diagnosis_rule_name: string | null;
   diagnosis_confidence: "High" | "Medium" | "Low" | null;
   worst_parameter: WorstParameter | null;
@@ -81,10 +148,13 @@ export interface FollowUpPipeline {
   rca_process_overdue: number;
 }
 
+export type ActionStatusLabel = "No owner yet" | "Proposed" | "Open" | "In progress";
+
 export interface OverviewResponse {
   replay_date: string;
   kpi_band: KpiBand;
   priority_queue: PriorityRow[];
+  follow_up_health: { awaiting_approval: number };
   loss_by_plant: PlantLoss[];
   heatmap: HeatmapCell[];
   follow_up_pipeline: FollowUpPipeline;
@@ -120,6 +190,11 @@ export interface Gauge {
 
 export interface HealthMarginGauge extends Gauge {
   worst_parameter: string | null;
+  // Highest margin at the alarm limit across the monitored parameters: the amber band runs from 0
+  // up to this, so the gauge is never green while any parameter is past its alarm limit.
+  alarm_margin_pct: number | null;
+  // Healthy baseline of the worst parameter (median of its first 6 weeks).
+  baseline: number | null;
 }
 
 export interface ProductionGauge extends Gauge {
@@ -132,21 +207,47 @@ export interface Gauges {
   production_vs_normal: ProductionGauge;
 }
 
-export interface PerformanceSummary {
+// Replay-safe estimate of a failure's cost: median of earlier similar incidents. Never a known
+// amount. The whole object is absent for a role that can't see money.
+export interface EstimatedImpact {
+  value_kusd: number | null;
+  basis: "eq_type_family" | "eq_class" | "all" | null;
+  n_incidents: number;
+}
+
+export interface Reliability {
+  failures: number | null;
+  observed_hours: number | null;
+  downtime_hours: number | null;
+  mtbf_hours: number | null;
+  mttr_hours: number | null;
+  message: string | null;
+}
+
+export interface EmissionDay {
+  day: string;
+  kwh: number;
+  kg_co2e: number;
+}
+
+export interface Emission {
+  applicable: boolean;
+  label: string;
+  factors: {
+    motor_voltage_kv: number;
+    power_factor: number;
+    grid_emission_factor_kg_per_kwh: number;
+  };
+  series: EmissionDay[];
+  today_kg: number | null;
+  week_kg: number | null;
+}
+
+export interface PastRca {
+  rca_id: number;
   equipment_tag: string;
-  monitoring_period_weeks: number;
-  total_downtime_hours: number;
-  period_hours: number;
-  availability_pct: number;
-  failures_period: number;
-  mtbf_hours: number;
-  mttr_hours: number;
-  alarm_readings: number;
-  trip_readings: number;
-  normal_readings: number;
-  pm_compliance_pct: number;
-  production_loss_ton: number;
-  estimated_loss_kusd?: number; // absent entirely when the viewing role can't see it
+  ar_no: string | null;
+  root_cause: string | null;
 }
 
 export interface CapaAction {
@@ -222,11 +323,14 @@ export interface EquipmentDetail {
   has_hourly_coverage: boolean;
   hourly_signals: Signal[];
   weekly_state: WeeklyState | null;
-  performance_summary: PerformanceSummary | null;
+  reliability: Reliability;
+  emission: Emission;
   gauges: Gauges;
   diagnosis: Diagnosis;
+  impact: EstimatedImpact;
   similar_incidents: SimilarIncident[];
   linked_rca: LinkedRca | null;
+  past_rcas: PastRca[];
 }
 
 export type StatusLane = "running" | "alarm" | "trip_off" | "no_data";
@@ -246,6 +350,10 @@ export interface StatusDistribution {
 
 export interface StatusTimeline {
   tag: string;
+  replay_date: string;
+  // Same axis contract as HourlySeries: the record's start and length, segments up to the replay date.
+  window_start: string | null;
+  axis_hours: number;
   segments: StatusSegment[];
   distribution: StatusDistribution[];
 }
@@ -256,11 +364,21 @@ export interface WeeklySeriesParameter {
   alarm: number | null;
   trip: number | null;
   direction: LimitDirection | null;
-  points: { week: number; week_date: string; value: number | null; remark: string | null }[];
+  points: {
+    week: number;
+    week_date: string;
+    value: number | null;
+    remark: string | null;
+    health_status: HealthStatus;
+  }[];
 }
 
 export interface WeeklySeries {
   tag: string;
+  replay_date: string;
+  // Number of weeks in the whole record (a count): the chart keeps this width; weeks after the
+  // replay date are not returned.
+  axis_weeks: number;
   parameters: WeeklySeriesParameter[];
 }
 
@@ -281,6 +399,12 @@ export interface HourlyPoint {
 export interface HourlySeries {
   tag: string;
   signal: Signal;
+  replay_date: string;
+  display_unit: string | null;
+  // Start of the hourly record and its length in hours: the chart keeps this x-axis size on every
+  // replay date, and the area after the replay date stays empty. Only points up to the replay date.
+  window_start: string | null;
+  axis_hours: number;
   points: HourlyPoint[];
 }
 
@@ -405,7 +529,10 @@ export interface SuggestedAction {
   action_text: string;
   suggested_pic: string | null;
   suggested_due_date: string | null;
-  source: "rca_capa" | "generic_default";
+  category: "corrective" | "preventive";
+  // "rca_capa": the equipment's own RCA, once its failure date is on or before the replay date.
+  // "action_library": generic maintenance action for the rule (catalog/action_library.py).
+  source: "rca_capa" | "action_library";
 }
 
 export interface SuggestedActionsResponse {
@@ -447,6 +574,7 @@ export interface BacktestRow {
   lead_time_hours: number | null;
   downtime_hours: number | null;
   loss_kusd?: number | null; // absent entirely when the viewing role can't see it
+  outcome_basis: string; // "Actual outcome (after the trip)": downtime and loss are not known at the time
   weekly_health: BacktestWeek[];
   message: string | null;
   assumption: string;
@@ -552,7 +680,9 @@ export interface EnergyProxyForecastPoint {
 
 export interface EnergyProxyResponse {
   tag: string;
+  replay_date: string;
   label: string;
+  axis_days: number;
   history: EnergyProxyPoint[];
   moving_average: EnergyProxyMovingAveragePoint[];
   forecast: EnergyProxyForecastPoint[];

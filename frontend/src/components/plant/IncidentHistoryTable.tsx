@@ -3,6 +3,7 @@ import type { PlantDetail } from "../../lib/types";
 import { formatDate } from "../../lib/format";
 import { Money } from "../ui/Money";
 import { Modal } from "../ui/Modal";
+import { StatusAsOfNote } from "../ui/StatusAsOfNote";
 
 // SPEC section 5.2: "incident history". A dashboard panel is supposed to be readable at a
 // glance; a 50-row table dumped inline is the opposite of that, and on the no-scroll plant
@@ -33,6 +34,7 @@ export function IncidentHistoryTable({
 
       {open && (
         <Modal title="Incident history" onClose={() => setOpen(false)} wide>
+          <StatusAsOfNote />
           <table className="w-full text-13">
             <thead>
               <tr className="border-b border-line text-left text-12 text-mute">

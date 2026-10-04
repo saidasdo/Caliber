@@ -1,4 +1,4 @@
-import type { LinkedRca } from "../../lib/types";
+import type { LinkedRca, PastRca } from "../../lib/types";
 
 interface FourColRow {
   item: string;
@@ -12,11 +12,30 @@ interface FourColRow {
 // chronology)." Same rca_reports row the Equipment page already links, just the structured
 // 4P (problem validation) / 4M+1E (root-cause factor) tables and the chronology, which were
 // ingested in phase 1 but never shown anywhere until now.
-export function RcaEvidencePanel({ rca }: { rca: LinkedRca | null }) {
+// Replay rule: the RCA is shown only on or after its failure date. Before that, say so, and
+// list the RCAs of similar past incidents (dated before the replay date), if any exist.
+export function RcaEvidencePanel({ rca, pastRcas = [] }: { rca: LinkedRca | null; pastRcas?: PastRca[] }) {
   if (!rca) {
     return (
-      <div className="border border-line bg-paper p-2 text-13 text-mute">
-        No linked RCA for this equipment.
+      <div className="border border-line bg-paper">
+        <div className="border-b border-line px-2 py-1.5 text-12 font-semibold uppercase tracking-wide text-mute">
+          RCA evidence
+        </div>
+        <p className="px-2 py-2 text-13 text-ink">No RCA yet for this event.</p>
+        {pastRcas.length > 0 && (
+          <div className="border-t border-line p-2">
+            <p className="mb-1 text-12 text-mute">RCAs of similar past incidents</p>
+            <ul className="space-y-1">
+              {pastRcas.map((p) => (
+                <li key={p.rca_id} className="text-13">
+                  <span className="tabular font-semibold text-ink">{p.equipment_tag}</span>
+                  <span className="text-mute"> {p.ar_no ?? ""}</span>
+                  {p.root_cause && <p className="text-12 text-mute">{p.root_cause}</p>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     );
   }

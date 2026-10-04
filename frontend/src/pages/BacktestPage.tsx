@@ -37,6 +37,9 @@ export function BacktestPage() {
 
   return (
     <div className="flex flex-col gap-1.5">
+      <p className="border border-line bg-paper px-2 py-1.5 text-13 text-mute">
+        Retrospective view: compares warnings with what happened later.
+      </p>
       <div className="border border-line bg-paper px-2 py-1.5">
         <h1 className="font-display stretch-semi-expanded text-20 font-bold text-ink">
           Backtest

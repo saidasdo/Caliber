@@ -79,40 +79,92 @@ def _availability_gauge(conn: sqlite3.Connection, tag: str, replay_date: str, wi
     return {"value": value, "previous": previous, "sparkline": sparkline, "data_available": value is not None}
 
 
+# Health margin baseline: median of each parameter over the first BASELINE_WEEKS weeks of its
+# condition_weekly record. Fixed per equipment and parameter (it does not move with the replay
+# date), so the healthy reference is the same whenever you look. Documented in the assumptions
+# table and the KPI dictionary.
+BASELINE_WEEKS = 6
+
+
+def _baselines(conn: sqlite3.Connection, tag: str) -> dict[str, float]:
+    first_week = conn.execute(
+        "SELECT MIN(week) FROM condition_weekly WHERE equipment_tag = ?", (tag,)
+    ).fetchone()[0]
+    if first_week is None:
+        return {}
+    rows = conn.execute(
+        "SELECT parameter, value FROM condition_weekly "
+        "WHERE equipment_tag = ? AND week < ? AND value IS NOT NULL",
+        (tag, first_week + BASELINE_WEEKS),
+    ).fetchall()
+    by_parameter: dict[str, list[float]] = {}
+    for parameter, value in rows:
+        by_parameter.setdefault(parameter, []).append(value)
+    return {parameter: statistics.median(values) for parameter, values in by_parameter.items()}
+
+
+def _margin_pct(value: float | None, trip: float | None, direction: str, baseline: float | None) -> float | None:
+    """100 = at the healthy baseline, 0 = at the trip limit, negative = beyond trip."""
+    if value is None or trip is None or baseline is None:
+        return None
+    if direction == "higher_is_worse":
+        denominator, numerator = trip - baseline, trip - value
+    else:
+        denominator, numerator = baseline - trip, value - trip
+    if denominator <= 0:
+        return None
+    return round(numerator / denominator * 100, 1)
+
+
 def _health_margin_gauge(conn: sqlite3.Connection, tag: str, replay_date: str) -> dict:
+    empty = {
+        "value": None,
+        "previous": None,
+        "sparkline": [],
+        "data_available": False,
+        "worst_parameter": None,
+        "alarm_margin_pct": None,
+    }
     week_row = conn.execute(
         "SELECT week FROM health_weekly WHERE equipment_tag = ? AND week_date <= ? "
         "ORDER BY week_date DESC LIMIT 1",
         (tag, replay_date),
     ).fetchone()
     if week_row is None:
-        return {"value": None, "previous": None, "sparkline": [], "data_available": False, "worst_parameter": None}
+        return empty
     week = week_row[0]
+    baselines = _baselines(conn, tag)
 
     rows = conn.execute(
-        "SELECT cw.parameter, cw.value, pl.trip, pl.direction "
+        "SELECT cw.parameter, cw.value, pl.trip, pl.alarm, pl.direction "
         "FROM condition_weekly cw "
         "JOIN param_limits pl ON pl.equipment_tag = cw.equipment_tag AND pl.parameter = cw.parameter "
         "WHERE cw.equipment_tag = ? AND cw.week = ?",
         (tag, week),
     ).fetchall()
 
-    def margin_pct(value: float, trip: float, direction: str) -> float | None:
-        if value is None or trip in (None, 0):
-            return None
-        if direction == "higher_is_worse":
-            return round((trip - value) / trip * 100, 1)
-        return round((value - trip) / trip * 100, 1)
-
     margins = [
-        (parameter, margin_pct(value, trip, direction))
-        for parameter, value, trip, direction in rows
+        (parameter, _margin_pct(value, trip, direction, baselines.get(parameter)), alarm, direction)
+        for parameter, value, trip, alarm, direction in rows
     ]
     margins = [m for m in margins if m[1] is not None]
     if not margins:
-        return {"value": None, "previous": None, "sparkline": [], "data_available": False, "worst_parameter": None}
+        return empty
 
-    worst_parameter, worst_value = min(margins, key=lambda m: m[1])
+    worst_parameter, worst_value, _, _ = min(margins, key=lambda m: m[1])
+    worst_baseline = baselines.get(worst_parameter)
+
+    # Amber band ends at the HIGHEST alarm margin across the monitored parameters. A parameter
+    # past its alarm limit has a margin below its own alarm margin, so using the worst parameter
+    # alone could show green on an equipment that is in ALARM (seen on BL-5702, 8 Apr 2026: the
+    # worst margin 75.9% is above the 2X harmonic alarm margin 54.1%, but Coupling Offset is past
+    # its alarm limit with alarm margin 94.3%).
+    alarm_margins = [
+        _margin_pct(alarm, trip, direction, baselines.get(parameter))
+        for parameter, _, trip, alarm, direction in rows
+        if alarm is not None
+    ]
+    alarm_margin = max((m for m in alarm_margins if m is not None), default=None)
 
     history = conn.execute(
         "SELECT cw.week, cw.value, pl.trip, pl.direction "
@@ -123,7 +175,7 @@ def _health_margin_gauge(conn: sqlite3.Connection, tag: str, replay_date: str) -
         (tag, worst_parameter, week, SPARKLINE_WEEKS + 1),
     ).fetchall()
     history = list(reversed(history))
-    sparkline = [margin_pct(v, trip, direction) for _, v, trip, direction in history]
+    sparkline = [_margin_pct(v, trip, direction, worst_baseline) for _, v, trip, direction in history]
     previous = sparkline[-2] if len(sparkline) >= 2 else None
 
     return {
@@ -132,6 +184,8 @@ def _health_margin_gauge(conn: sqlite3.Connection, tag: str, replay_date: str) -
         "sparkline": [s for s in sparkline if s is not None],
         "data_available": True,
         "worst_parameter": worst_parameter,
+        "alarm_margin_pct": alarm_margin,
+        "baseline": round(worst_baseline, 2) if worst_baseline is not None else None,
     }
 
 
@@ -185,6 +239,11 @@ def _production_vs_normal_gauge(
         "data_available": value is not None,
         "baseline": round(baseline, 2),
     }
+
+
+def health_margin(conn: sqlite3.Connection, tag: str, replay_date: str) -> dict:
+    """Public entry point for the replay-safe health margin (used by alert priority)."""
+    return _health_margin_gauge(conn, tag, replay_date)
 
 
 def compute_gauges(conn: sqlite3.Connection, tag: str, replay_date: str) -> dict:

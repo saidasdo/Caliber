@@ -57,13 +57,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Phase 10 section 5: every API request carries X-Role / X-Plant. api.ts's fetch helpers
-  // aren't hooks, so the scope is pushed into a module-level holder (lib/requestScope.ts)
-  // here, on every change. Declared before the overview-fetch effect below (React runs a
-  // render's effects in declaration order) so that fetch always sees the up-to-date scope,
-  // never a stale one from before the latest role/plant switch.
-  useEffect(() => {
-    setRequestScope(role, selectedPlant);
-  }, [role, selectedPlant]);
+  // aren't hooks, so the scope is pushed into a module-level holder (lib/requestScope.ts).
+  // This is set during render, not in an effect: child effects (a page's own useFetch) run
+  // before this provider's effects, so an effect here let a page request go out with the
+  // previous role's scope right after a role switch (money came back redacted until the next
+  // refetch). Setting it during render guarantees every child effect sees the current scope.
+  setRequestScope(role, selectedPlant, replayDate);
 
   useEffect(() => {
     let cancelled = false;

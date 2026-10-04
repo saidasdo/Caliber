@@ -22,19 +22,22 @@ def _day_health_status(days: list[str], weeks: list[tuple[str, str]]) -> dict[st
     return result
 
 
-def build_status_timeline(conn: sqlite3.Connection, tag: str) -> dict:
-    hourly = conn.execute(
-        "SELECT ts, run_status FROM sensor_hourly "
-        "WHERE equipment_tag = ? AND signal = 'plant_rate' ORDER BY ts",
-        (tag,),
-    ).fetchall()
+def build_status_timeline(conn: sqlite3.Connection, tag: str, replay_date: str | None = None) -> dict:
+    """Segments up to the replay date only (replay_date=None is the retrospective full record)."""
+    sql = "SELECT ts, run_status FROM sensor_hourly WHERE equipment_tag = ? AND signal = 'plant_rate'"
+    params: list = [tag]
+    week_sql = "SELECT week_date, health_status FROM health_weekly WHERE equipment_tag = ?"
+    week_params: list = [tag]
+    if replay_date is not None:
+        sql += " AND ts <= ?"
+        params.append(replay_date + " 23:59:59")
+        week_sql += " AND week_date <= ?"
+        week_params.append(replay_date)
+    hourly = conn.execute(sql + " ORDER BY ts", params).fetchall()
     if not hourly:
         return {"segments": [], "distribution": []}
 
-    weeks = conn.execute(
-        "SELECT week_date, health_status FROM health_weekly WHERE equipment_tag = ? ORDER BY week_date",
-        (tag,),
-    ).fetchall()
+    weeks = conn.execute(week_sql + " ORDER BY week_date", week_params).fetchall()
     weeks = [(w[0], w[1]) for w in weeks]
 
     days = sorted({ts[:10] for ts, _ in hourly})

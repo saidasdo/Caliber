@@ -64,13 +64,27 @@ def test_preloaded_actions_link_back_to_their_rca_problem(conn):
 
 
 def test_suggested_actions_come_from_the_matching_rca_corrective_capa():
-    r = client.get("/api/equipment/KO-3201/suggested-actions", params={"replay_date": "2026-04-08"})
+    """After KO-3201's failure date (29 Apr 2026) the RCA is known, so its corrective CAPA is used."""
+    r = client.get("/api/equipment/KO-3201/suggested-actions", params={"replay_date": "2026-05-01"})
     body = r.json()
     assert body["confidence"] == "High"
     assert len(body["suggestions"]) > 0
     for s in body["suggestions"]:
         assert s["source"] == "rca_capa"
         assert s["source_capa_action_id"] is not None
+
+
+def test_suggested_actions_before_failure_use_action_library_not_rca_capa():
+    """Replay rule: on 8 Apr 2026 the KO-3201 RCA (failure 29 Apr) is not yet known, so no CAPA text
+    is suggested. The generic library is used, two corrective and two preventive."""
+    r = client.get("/api/equipment/KO-3201/suggested-actions", params={"replay_date": "2026-04-08"})
+    body = r.json()
+    assert body["confidence"] == "High"
+    assert [s["source"] for s in body["suggestions"]] == ["action_library"] * 4
+    assert sorted(s["category"] for s in body["suggestions"]) == [
+        "corrective", "corrective", "preventive", "preventive",
+    ]
+    assert all(s["source_capa_action_id"] is None for s in body["suggestions"])
 
 
 def test_suggested_actions_empty_when_no_confident_diagnosis():

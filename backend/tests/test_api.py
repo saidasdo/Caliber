@@ -10,6 +10,18 @@ pytestmark = pytest.mark.skipif(not DB_PATH.exists(), reason="run `npm run inges
 
 client = TestClient(app)
 
+
+def backend_failure_date(tag: str) -> str:
+    import sqlite3
+
+    from app.config import DB_PATH
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute("SELECT failure_date FROM equipment WHERE tag = ?", (tag,)).fetchone()[0]
+    finally:
+        conn.close()
+
 REPLAY_DATE = "2026-04-08"
 
 
@@ -31,6 +43,7 @@ def test_overview_replay_date_matches_spec_example():
         "PU-2101B": "NORMAL",
         "PM-4405B": "NORMAL",
     }
+    # KO-3201 is first on 8 Apr: it has the lowest margin with all four parameters past alarm.
     assert body["priority_queue"][0]["equipment_tag"] == "KO-3201"
     assert len(body["loss_by_plant"]) == 12
 
@@ -47,7 +60,12 @@ def test_equipment_detail_for_all_five(tag):
     body = r.json()
     assert body["tag"] == tag
     assert body["weekly_state"] is not None
-    assert body["linked_rca"]["root_cause"]
+    # Replay rule: the RCA panel is shown only once the failure date is on or before the replay date.
+    failure_date = backend_failure_date(tag)
+    if failure_date <= REPLAY_DATE:
+        assert body["linked_rca"]["root_cause"]
+    else:
+        assert body["linked_rca"] is None
 
 
 def test_equipment_unknown_tag_is_404():
@@ -129,7 +147,8 @@ def test_kpi_dictionary_is_seeded():
 def test_actions_endpoint_returns_preloaded_capa_actions():
     # Populated in phase 6 (see tests/test_actions_phase6.py for full coverage); this just
     # keeps the phase 2 smoke test accurate now that the endpoint has real data.
-    r = client.get("/api/actions")
+    # Full record: a replay date after every RCA failure date shows all preloaded CAPA actions.
+    r = client.get("/api/actions", params={"replay_date": "2099-12-31"})
     assert r.status_code == 200
     assert len(r.json()["results"]) >= 47
 

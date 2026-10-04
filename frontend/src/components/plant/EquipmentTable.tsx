@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { PriorityRow } from "../../lib/types";
 import { HealthChip, PriorityChip } from "../ui/StatusChip";
+import { formatHours } from "../../lib/format";
 
 // Above this many plain tag codes, showing them all inline stops being glanceable and starts
 // being a wall of chips; collapse behind a count + expand instead.
@@ -32,6 +33,8 @@ export function EquipmentTable({
             <th className="px-2 py-1 font-medium">Class</th>
             <th className="px-2 py-1 font-medium">Status</th>
             <th className="px-2 py-1 font-medium">Worst parameter vs limit</th>
+            <th className="px-2 py-1 font-medium text-right">MTBF</th>
+            <th className="px-2 py-1 font-medium text-right">MTTR</th>
             <th className="px-2 py-1 font-medium">Priority</th>
           </tr>
         </thead>
@@ -57,6 +60,20 @@ export function EquipmentTable({
                   <span className="text-mute">-</span>
                 )}
               </td>
+              <td className="tabular px-2 py-1.5 text-right text-ink">
+                {eq.reliability?.mtbf_hours != null ? (
+                  formatHours(eq.reliability.mtbf_hours)
+                ) : (
+                  <span className="text-12 text-mute">{eq.reliability?.message ?? "-"}</span>
+                )}
+              </td>
+              <td className="tabular px-2 py-1.5 text-right text-ink">
+                {eq.reliability?.mttr_hours != null ? (
+                  formatHours(eq.reliability.mttr_hours)
+                ) : (
+                  <span className="text-12 text-mute">-</span>
+                )}
+              </td>
               <td className="px-2 py-1.5">
                 <PriorityChip label={eq.priority_label} />
               </td>
@@ -64,7 +81,7 @@ export function EquipmentTable({
           ))}
           {equipment.length === 0 && (
             <tr>
-              <td colSpan={5} className="px-2 py-2 text-mute">
+              <td colSpan={7} className="px-2 py-2 text-mute">
                 No sensor-equipped equipment in this plant.
               </td>
             </tr>

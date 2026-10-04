@@ -35,8 +35,8 @@ export function GaugeCard({ title, gauge, min, max, unit, colorStops, formatValu
           max,
           startAngle: 210,
           endAngle: -30,
-          radius: "100%",
-          center: ["50%", "50%"],
+          radius: compact ? 104 : "100%",
+          center: compact ? ["50%", 108] : ["50%", "50%"],
           progress: { show: false },
           pointer: {
             show: true,
@@ -46,7 +46,7 @@ export function GaugeCard({ title, gauge, min, max, unit, colorStops, formatValu
           },
           axisLine: {
             lineStyle: {
-              width: 10,
+              width: 18,
               color: colorStops,
             },
           },
@@ -63,7 +63,7 @@ export function GaugeCard({ title, gauge, min, max, unit, colorStops, formatValu
             color: colors.ink,
             // Sits under the dial's hub, below where the needle sweeps, so the number never
             // touches the needle at any value.
-            offsetCenter: [0, "42%"],
+            offsetCenter: compact ? [0, 44] : [0, "42%"],
           },
           data: [{ value: gauge.value }],
         },
@@ -81,7 +81,7 @@ export function GaugeCard({ title, gauge, min, max, unit, colorStops, formatValu
 
   if (compact) {
     return gauge.data_available && gauge.value !== null ? (
-      <div ref={ref} style={{ height: "100%", minHeight: 110 }} />
+      <div ref={ref} style={{ height: 160 }} />
     ) : (
       <NoHourlyData height={110} />
     );

@@ -11,6 +11,8 @@ pytestmark = pytest.mark.skipif(not DB_PATH.exists(), reason="run `npm run inges
 client = TestClient(app)
 
 ALL_TAGS = ["PU-2101B", "KO-3201", "PM-4405B", "HE-3301", "BL-5702"]
+# A replay date after the whole record: the full-history checks below need every week and hour.
+FULL_RECORD = "2099-12-31"
 
 
 @pytest.mark.parametrize("tag", ALL_TAGS)
@@ -39,12 +41,15 @@ def test_ko3201_health_margin_worst_parameter_matches_narrowest_trip_distance():
     # limit than the other three monitored parameters (see the diagnosis test in test_api.py
     # for the alarm-based ranking, which differs from this trip-based one by design).
     assert gauges["health_margin"]["worst_parameter"] == "Bearing Metal Temp"
-    assert gauges["health_margin"]["value"] < 20
+    # Margin is measured from the healthy baseline (see gauges.py): on 8 Apr the bearing is past
+    # its alarm limit (below the alarm margin) but not yet at trip (above 0).
+    margin = gauges["health_margin"]
+    assert 0 < margin["value"] < margin["alarm_margin_pct"]
 
 
 @pytest.mark.parametrize("tag", ALL_TAGS)
 def test_status_timeline_covers_the_full_hourly_window(tag):
-    r = client.get(f"/api/equipment/{tag}/status-timeline")
+    r = client.get(f"/api/equipment/{tag}/status-timeline", params={"replay_date": FULL_RECORD})
     assert r.status_code == 200
     body = r.json()
     total_hours = sum(d["duration_hours"] for d in body["distribution"])
@@ -58,14 +63,14 @@ def test_status_timeline_off_hours_match_acceptance_numbers(tag):
     expected_off = {
         "PU-2101B": 18, "KO-3201": 32, "PM-4405B": 8, "HE-3301": 13, "BL-5702": 14,
     }
-    r = client.get(f"/api/equipment/{tag}/status-timeline")
+    r = client.get(f"/api/equipment/{tag}/status-timeline", params={"replay_date": FULL_RECORD})
     dist = {d["lane"]: d["duration_hours"] for d in r.json()["distribution"]}
     assert dist["trip_off"] == expected_off[tag]
 
 
 @pytest.mark.parametrize("tag", ALL_TAGS)
 def test_weekly_series_has_four_parameters_26_weeks_each(tag):
-    r = client.get(f"/api/equipment/{tag}/weekly-series")
+    r = client.get(f"/api/equipment/{tag}/weekly-series", params={"replay_date": FULL_RECORD})
     assert r.status_code == 200
     parameters = r.json()["parameters"]
     assert len(parameters) == 4

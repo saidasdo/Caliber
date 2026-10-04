@@ -13,6 +13,26 @@ REPLAY_PRESETS = {
 }
 
 
+def replay_end(replay_date: str) -> str:
+    """Last instant on the replay date, for comparing 'YYYY-MM-DD HH:MM:SS' timestamps."""
+    return replay_date + " 23:59:59"
+
+
+def hourly_axis(conn: sqlite3.Connection, tag: str, signal: str | None = None) -> dict:
+    """Start of the hourly record and its length in hours. Charts use these to keep the x-axis
+    the same size on every replay date. Only the start and a count are returned, never the end
+    timestamp, so no future date leaves the server."""
+    sql = "SELECT MIN(ts), MAX(ts), COUNT(*) FROM sensor_hourly WHERE equipment_tag = ?"
+    params: list = [tag]
+    if signal:
+        sql += " AND signal = ?"
+        params.append(signal)
+    start, end, count = conn.execute(sql, params).fetchone()
+    if start is None:
+        return {"window_start": None, "axis_hours": 0}
+    return {"window_start": start, "axis_hours": count}
+
+
 def resolve_week(conn: sqlite3.Connection, tag: str, replay_date: str) -> dict | None:
     """Latest weekly reading on or before replay_date, with each parameter's limits and trend."""
     health = conn.execute(

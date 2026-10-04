@@ -2,8 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import { getEquipmentAnomalies, getEquipmentSeries } from "../../lib/api";
 import { useFetch } from "../../lib/useFetch";
-import type { AnomalyMarker, Signal } from "../../lib/types";
+import type { AnomalyMarker, HourlyPoint, Signal } from "../../lib/types";
 import { colors } from "../../styles/tokens";
+import {
+  HOUR_MS,
+  TICK_EVERY_HOURS,
+  dayLabel,
+  hourIndex,
+  hourTimestamp,
+  replayEndIndex,
+  tsToMs,
+} from "../../lib/replayAxis";
 import { NoHourlyData } from "./NoHourlyData";
 
 const SIGNALS: { value: Signal; label: string }[] = [
@@ -15,7 +24,8 @@ const SIGNALS: { value: Signal; label: string }[] = [
   { value: "plant_rate", label: "Plant rate" },
 ];
 
-// SPEC section 5.3: "Hourly trend with anomaly markers (section 5.5)."
+// SPEC section 5.3: "Hourly trend with anomaly markers (section 5.5)." Replay rule (SPEC 4): the line
+// ends at the replay date; the x-axis keeps the full record width, and the rest is an empty band.
 export function HourlyTrendChart({
   tag,
   replayDate,
@@ -34,34 +44,53 @@ export function HourlyTrendChart({
   const [pickedSignal, setSignal] = useState<Signal>("vibration");
   const signal = compact ? (fixedSignal ?? "vibration") : pickedSignal;
   const ref = useRef<HTMLDivElement>(null);
-  const state = useFetch(() => getEquipmentSeries(tag, signal), [tag, signal]);
-  const anomalyState = useFetch(() => getEquipmentAnomalies(tag, signal), [tag, signal]);
+  const state = useFetch(() => getEquipmentSeries(tag, signal, replayDate), [tag, signal, replayDate]);
+  const anomalyState = useFetch(
+    () => getEquipmentAnomalies(tag, signal, replayDate),
+    [tag, signal, replayDate],
+  );
 
   useEffect(() => {
     if (!ref.current || state.status !== "ready") return;
-    const { points } = state.data;
+    const { points, display_unit: unit, window_start: start, axis_hours: axis } = state.data;
+    if (!start || axis === 0) return;
+
     const anomalies: AnomalyMarker[] = anomalyState.status === "ready" ? anomalyState.data.anomalies : [];
-    const replayTs = `${replayDate} 23:59:59`;
-    const replayIndex = points.reduce(
-      (best, p, i) => (p.ts <= replayTs ? i : best),
-      -1,
+    const startMs = tsToMs(start);
+    const values: (number | null)[] = new Array(axis).fill(null);
+    const pointAt = new Map<number, HourlyPoint>();
+    for (const p of points) {
+      const i = hourIndex(start, p.ts);
+      if (i >= 0 && i < axis) {
+        values[i] = p.value;
+        pointAt.set(i, p);
+      }
+    }
+    const lastIndex = Math.min(axis - 1, replayEndIndex(start, replayDate));
+    const labels = Array.from({ length: axis }, (_, i) =>
+      i % TICK_EVERY_HOURS === 0 ? dayLabel(startMs + i * HOUR_MS) : "",
     );
+    const offIndexRanges = offRanges(points).map(([a, b]) => [hourIndex(start, a), hourIndex(start, b)] as const);
+    const anomalyRanges = anomalies.map((a) => [hourIndex(start, a.start_ts), hourIndex(start, a.end_ts)] as const);
+    const inAnomaly = (i: number) => anomalyRanges.some(([a, b]) => i >= a && i <= b);
 
     const chart = echarts.init(ref.current);
     chart.setOption({
-      grid: compact ? { left: 4, right: 4, top: 4, bottom: 4 } : { left: 44, right: 12, top: 10, bottom: 40 },
+      grid: compact ? { left: 40, right: 8, top: 16, bottom: 20 } : { left: 44, right: 12, top: 24, bottom: 40 },
       textStyle: { fontFamily: "IBM Plex Sans" },
       xAxis: {
         type: "category",
-        data: points.map((p) => p.ts),
-        show: !compact,
-        axisLabel: { fontSize: 10, color: colors.mute, rotate: 30, formatter: (v: string) => v.slice(5, 10) },
+        data: labels,
+        show: true,
+        axisLabel: { fontSize: 10, color: colors.mute, interval: 0 },
         axisLine: { lineStyle: { color: colors.line } },
         axisTick: { show: false },
       },
       yAxis: {
         type: "value",
-        show: !compact,
+        show: true,
+        name: unit ?? "",
+        nameTextStyle: { fontSize: 10, color: colors.mute, align: "left" },
         axisLabel: { fontSize: 10, color: colors.mute },
         axisLine: { show: false },
         splitLine: { lineStyle: { color: colors.line, type: "dashed" } },
@@ -69,23 +98,30 @@ export function HourlyTrendChart({
       series: [
         {
           type: "line",
-          data: points.map((p) => p.value),
+          data: values,
           showSymbol: false,
+          connectNulls: false,
           lineStyle: { color: colors.blue, width: 1.2 },
           markArea: {
             silent: true,
             data: [
-              ...offRanges(points).map(([start, end]) => [
-                { xAxis: start, itemStyle: { color: colors.canvas } },
-                { xAxis: end },
+              ...offIndexRanges.map(([a, b]) => [{ xAxis: a, itemStyle: { color: colors.canvas } }, { xAxis: b }]),
+              ...anomalyRanges.map(([a, b]) => [
+                { xAxis: a, itemStyle: { color: colors.red, opacity: 0.12 } },
+                { xAxis: b },
               ]),
-              ...anomalies.map((a) => [
-                {
-                  xAxis: a.start_ts,
-                  itemStyle: { color: colors.red, opacity: 0.12 },
-                },
-                { xAxis: a.end_ts },
-              ]),
+              ...(lastIndex < axis - 1
+                ? [
+                    [
+                      {
+                        xAxis: lastIndex + 0.5,
+                        itemStyle: { color: colors.canvas },
+                        label: { show: false },
+                      },
+                      { xAxis: axis - 1 },
+                    ],
+                  ]
+                : []),
             ],
           },
           markPoint: {
@@ -94,30 +130,21 @@ export function HourlyTrendChart({
             itemStyle: { color: colors.red },
             label: { color: colors.paper, fontSize: 10 },
             data: anomalies.map((a) => ({
-              coord: [a.start_ts, a.peak_value],
+              coord: [hourIndex(start, a.start_ts), a.peak_value],
               value: "!",
             })),
-          },
-          markLine: {
-            symbol: "none",
-            data:
-              replayIndex >= 0
-                ? [{ xAxis: replayIndex, lineStyle: { color: colors.ink, width: 1 }, label: { show: false } }]
-                : [],
           },
         },
       ],
       tooltip: {
         trigger: "axis",
         extraCssText: "box-shadow: 0 4px 16px rgba(14,17,22,0.16);",
-        formatter: (params: { name: string; value: number }[]) => {
-          const idx = points.findIndex((p) => p.ts === params[0].name);
-          const runStatus = idx >= 0 ? points[idx].run_status : "";
-          const inAnomaly = anomalies.some((a) => params[0].name >= a.start_ts && params[0].name <= a.end_ts);
-          return (
-            `${params[0].name}<br/>${params[0].value} (${runStatus})` +
-            (inAnomaly ? "<br/><span style=\"color:" + colors.red + "\">Anomaly</span>" : "")
-          );
+        formatter: (params: { dataIndex: number; value: number | null }[]) => {
+          const i = params[0].dataIndex;
+          const point = pointAt.get(i);
+          const suffix = unit ? ` ${unit}` : "";
+          const anomaly = inAnomaly(i) ? '<br/><span style="color:' + colors.red + '">Anomaly</span>' : "";
+          return `${hourTimestamp(startMs + i * HOUR_MS)}<br/>${params[0].value ?? "-"}${suffix} (${point?.run_status ?? ""})${anomaly}`;
         },
       },
     });
@@ -130,11 +157,13 @@ export function HourlyTrendChart({
     };
   }, [state, anomalyState, replayDate, compact]);
 
+  const hasData = state.status === "ready" && !!state.data.window_start;
+
   if (compact) {
     const hasAnomaly = anomalyState.status === "ready" && anomalyState.data.anomalies.length > 0;
     return !hasHourlyCoverage ? (
       <NoHourlyData height={70} />
-    ) : state.status === "ready" ? (
+    ) : hasData ? (
       <div ref={ref} style={{ height: "100%", minHeight: 70 }} className={hasAnomaly ? "ring-1 ring-red" : ""} />
     ) : (
       <div className="flex h-[70px] items-center justify-center text-12 text-mute">
@@ -170,14 +199,12 @@ export function HourlyTrendChart({
       </div>
       {!hasHourlyCoverage ? (
         <NoHourlyData height={260} />
-      ) : state.status === "ready" ? (
+      ) : hasData ? (
         <div ref={ref} style={{ height: 260 }} />
       ) : state.status === "error" ? (
         <NoHourlyData height={260} />
       ) : (
-        <div className="flex h-[260px] items-center justify-center text-13 text-mute">
-          Loading...
-        </div>
+        <div className="flex h-[260px] items-center justify-center text-13 text-mute">Loading...</div>
       )}
     </div>
   );

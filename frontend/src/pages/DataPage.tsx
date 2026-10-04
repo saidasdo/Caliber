@@ -1,17 +1,19 @@
 import { useState } from "react";
 import { useAppState } from "../state/AppStateContext";
-import { getDataQuality, getKpiDictionary, getProcessFlags, getSourceMap } from "../lib/api";
+import { getAssumptions, getDataQuality, getKpiDictionary, getProcessFlags, getSourceMap } from "../lib/api";
 import { useFetch } from "../lib/useFetch";
 import { SourceMapTable } from "../components/data/SourceMapTable";
 import { KpiDictionaryTable } from "../components/data/KpiDictionaryTable";
 import { DataQualityPanel } from "../components/data/DataQualityPanel";
 import { ProcessFlagsPanel } from "../components/data/ProcessFlagsPanel";
+import { AssumptionsTable } from "../components/data/AssumptionsTable";
 
-type SubTab = "source-map" | "kpi-dictionary" | "data-quality";
+type SubTab = "source-map" | "kpi-dictionary" | "assumptions" | "data-quality";
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "source-map", label: "Source map" },
   { id: "kpi-dictionary", label: "KPI dictionary" },
+  { id: "assumptions", label: "Assumptions" },
   { id: "data-quality", label: "Data quality" },
 ];
 
@@ -24,6 +26,7 @@ export function DataPage() {
   const sourceMap = useFetch(() => getSourceMap(), []);
   const kpiDictionary = useFetch(() => getKpiDictionary(), []);
   const dataQuality = useFetch(() => getDataQuality(), []);
+  const assumptions = useFetch(() => getAssumptions(), []);
   const processFlags = useFetch(() => getProcessFlags(replayDate), [replayDate]);
 
   return (
@@ -33,6 +36,7 @@ export function DataPage() {
         <p className="text-12 text-mute">
           Where every number on this dashboard comes from, what it means, and how trustworthy it is.
         </p>
+        <p className="text-12 text-mute">Data quality checks run on the full dataset.</p>
       </div>
 
       <nav className="flex gap-4 border-b border-line bg-paper px-2">
@@ -62,6 +66,13 @@ export function DataPage() {
           <KpiDictionaryTable entries={kpiDictionary.data.results} />
         ) : (
           <Loading status={kpiDictionary.status} />
+        ))}
+
+      {tab === "assumptions" &&
+        (assumptions.status === "ready" ? (
+          <AssumptionsTable entries={assumptions.data.results} />
+        ) : (
+          <Loading status={assumptions.status} />
         ))}
 
       {tab === "data-quality" && (

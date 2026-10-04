@@ -52,7 +52,7 @@ export function SuggestedActionsPanel({
       ) : suggested.data.suggestions.length === 0 ? (
         <p className="px-2 py-2 text-13 text-mute">
           {suggested.data.confidence
-            ? "No corrective CAPA or generic default found for this rule."
+            ? "No corrective CAPA or library action found for this rule."
             : "No confident diagnosis, nothing to suggest."}
         </p>
       ) : (
@@ -170,7 +170,7 @@ function SuggestionRow({
     <li className="px-2 py-1.5">
       <p className="text-13 text-ink">{suggestion.action_text}</p>
       <p className="text-12 text-mute">
-        {suggestion.source === "rca_capa" ? "From the equipment's own RCA" : "Generic default"}
+        {suggestion.source === "rca_capa" ? "From the equipment's own RCA" : "Generic action (library)"}
       </p>
 
       {!canPropose && (

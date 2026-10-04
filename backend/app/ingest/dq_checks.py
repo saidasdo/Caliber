@@ -42,7 +42,9 @@ def dq1_values_outside_span(conn: sqlite3.Connection) -> list[dict]:
                 f"{out_count} of {total} values outside {zero} to {span} {unit}",
                 f"0 to {span} {unit} (PI Tag span)",
                 "Values match the weekly micron-scale data for the same physical parameter, "
-                "so the unit label is likely wrong. Derived views assume micron for this signal.",
+                "so the unit label is likely wrong. Applied assumption: the hourly chart and its "
+                "API response show micron (display_unit 'µm (assumed, see DQ1)') for KO-3201 "
+                "vibration. The raw values are unchanged.",
             )
         )
     return issues

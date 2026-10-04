@@ -1,105 +1,97 @@
 import type { StatusLane, StatusSegment } from "../../lib/types";
+import { HOUR_MS, TICK_EVERY_HOURS, dayLabel, hourIndex, replayEndIndex, tsToMs } from "../../lib/replayAxis";
 import { NoHourlyData } from "./NoHourlyData";
 
-// SPEC section 5.3 / 7: "Machine status timeline like reference 1: lanes Running (green),
-// Alarm (amber), Trip/Off (red), No data (gray)."
-const LANE_ORDER: StatusLane[] = ["running", "alarm", "trip_off", "no_data"];
-const LANE_LABEL: Record<StatusLane, string> = {
-  running: "Running",
-  alarm: "Alarm",
-  trip_off: "Trip / Off",
-  no_data: "No data",
-};
-const LANE_CLASS: Record<StatusLane, string> = {
-  running: "bg-green",
-  alarm: "bg-amber",
-  trip_off: "bg-red",
-  no_data: "bg-line",
-};
+// SPEC section 5.3 / 7: Running (green), Alarm (amber) and Trip / Off (red), one lane each, so every
+// state reads on its own row. A tick every three days lets you read a lane against dates. The area
+// after the replay date stays empty as a grey band (replay rule, SPEC 4).
+const LANES: { lane: StatusLane; label: string; className: string }[] = [
+  { lane: "running", label: "Running", className: "bg-green" },
+  { lane: "alarm", label: "Alarm", className: "bg-amber" },
+  { lane: "trip_off", label: "Trip / Off", className: "bg-red" },
+];
 
 export function MachineStatusTimeline({
   segments,
+  windowStart,
+  axisHours,
+  replayDate,
   hasHourlyCoverage,
   compact,
 }: {
   segments: StatusSegment[];
+  windowStart: string | null;
+  axisHours: number;
+  replayDate: string;
   hasHourlyCoverage: boolean;
-  // Just the single "Overview" lane, no border/header/per-lane breakdown: the real color bar
-  // for a summary tile, not a bare number standing in for it. Click opens the full version.
+  // Overview tile: the same three lanes, shorter. The pop-up uses taller lanes.
   compact?: boolean;
 }) {
-  if (!hasHourlyCoverage || segments.length === 0) {
-    return compact ? (
-      <NoHourlyData height={32} />
-    ) : (
-      <div className="border border-line bg-paper">
-        <div className="border-b border-line px-2 py-1.5 text-12 font-semibold uppercase tracking-wide text-mute">
-          Machine status timeline
+  if (!hasHourlyCoverage || !windowStart || axisHours === 0) {
+    return <NoHourlyData height={compact ? 32 : 180} />;
+  }
+
+  const startMs = tsToMs(windowStart);
+  const lastIndex = Math.min(axisHours - 1, replayEndIndex(windowStart, replayDate));
+  const pct = (hours: number) => (hours / axisHours) * 100;
+
+  const bars = segments
+    .filter((s) => s.lane !== "no_data")
+    .map((s) => ({ ...s, left: pct(hourIndex(windowStart, s.start_ts)), width: pct(s.hours) }));
+
+  const ticks: { left: number; label: string }[] = [];
+  for (let h = 0; h <= lastIndex; h += TICK_EVERY_HOURS) {
+    ticks.push({ left: pct(h), label: dayLabel(startMs + h * HOUR_MS) });
+  }
+
+  // Explicit heights: the custom palette has no spacing scale for these sizes.
+  const laneHeight = compact ? 14 : 22;
+
+  return (
+    <div className="flex h-full flex-col justify-center gap-1">
+      {LANES.map((l) => (
+        <div key={l.lane} className="flex items-center gap-2">
+          <span className="w-16 shrink-0 text-12 text-mute">{l.label}</span>
+          <div className="relative w-full bg-canvas" style={{ height: laneHeight }}>
+            {ticks.map((t, i) => (
+              <div key={i} className="absolute inset-y-0 w-px bg-line" style={{ left: `${t.left}%` }} />
+            ))}
+            {bars
+              .filter((s) => s.lane === l.lane)
+              .map((s, i) => (
+                <div
+                  key={i}
+                  title={`${l.label}: ${s.start_ts} to ${s.end_ts} (${s.hours}h)`}
+                  className={`absolute inset-y-0 ${l.className}`}
+                  style={{ left: `${s.left}%`, width: `${Math.max(s.width, 0.15)}%` }}
+                />
+              ))}
+            {lastIndex < axisHours - 1 && (
+              <div
+                className="absolute inset-y-0 border-l border-dashed border-mute"
+                style={{
+                  left: `${pct(lastIndex + 1)}%`,
+                  width: `${pct(axisHours - lastIndex - 1)}%`,
+                  backgroundColor: "#E4E6EA",
+                }}
+              />
+            )}
+          </div>
         </div>
-        <NoHourlyData height={180} />
-      </div>
-    );
-  }
-
-  const totalHours = segments.reduce((sum, s) => sum + s.hours, 0);
-  let cursor = 0;
-  const positioned = segments.map((s) => {
-    const left = (cursor / totalHours) * 100;
-    cursor += s.hours;
-    return { ...s, left, width: (s.hours / totalHours) * 100 };
-  });
-
-  if (compact) {
-    return (
-      <div className="flex h-full flex-col justify-center gap-1">
-        <Lane label="" segments={positioned} filterLane={null} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="border border-line bg-paper">
-      <div className="flex items-center justify-between border-b border-line px-2 py-1.5">
-        <span className="text-12 font-semibold uppercase tracking-wide text-mute">
-          Machine status timeline
-        </span>
-        <span className="tabular text-12 text-mute">
-          {segments[0].start_ts.slice(0, 10)} to {segments[segments.length - 1].end_ts.slice(0, 10)}
-        </span>
-      </div>
-      <div className="space-y-1 p-2">
-        <Lane label="Overview" segments={positioned} filterLane={null} />
-        {LANE_ORDER.map((lane) => (
-          <Lane key={lane} label={LANE_LABEL[lane]} segments={positioned} filterLane={lane} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Lane({
-  label,
-  segments,
-  filterLane,
-}: {
-  label: string;
-  segments: (StatusSegment & { left: number; width: number })[];
-  filterLane: StatusLane | null;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      {label && <span className="w-[72px] shrink-0 text-12 text-mute">{label}</span>}
-      <div className="relative h-2 flex-1 bg-canvas">
-        {segments
-          .filter((s) => filterLane === null || s.lane === filterLane)
-          .map((s, i) => (
-            <div
+      ))}
+      <div className="flex items-start gap-2">
+        <div className="w-16 shrink-0" />
+        <div className="relative h-4 w-full">
+          {ticks.map((t, i) => (
+            <span
               key={i}
-              title={`${LANE_LABEL[s.lane]}: ${s.start_ts} to ${s.end_ts} (${s.hours}h)`}
-              className={`absolute inset-y-0 ${LANE_CLASS[s.lane]}`}
-              style={{ left: `${s.left}%`, width: `${Math.max(s.width, 0.15)}%` }}
-            />
+              className="tabular absolute top-0 whitespace-nowrap text-12 text-mute"
+              style={{ left: `${t.left}%`, transform: t.left > 0 ? "translateX(-50%)" : undefined }}
+            >
+              {t.label}
+            </span>
           ))}
+        </div>
       </div>
     </div>
   );
